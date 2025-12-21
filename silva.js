@@ -339,6 +339,19 @@ class FunctionsWrapper {
         if (jid.includes('@lid')) return jid;
         return jid + '@s.whatsapp.net';
     }
+    
+    // Parse status emoji from config string
+    getStatusEmoji(configString) {
+        if (!configString) return '💚';
+        
+        // Split by comma and trim each emoji
+        const emojis = configString.split(',').map(e => e.trim()).filter(e => e);
+        if (emojis.length === 0) return '💚';
+        
+        // Pick random emoji from the list
+        const randomIndex = Math.floor(Math.random() * emojis.length);
+        return emojis[randomIndex];
+    }
 }
 
 // ==============================
@@ -661,7 +674,8 @@ class SilvaBot {
                     if (!jid || typeof jid !== 'string') {
                         return false;
                     }
-                    return jid === 'status@broadcast' || jid.includes('@newsletter');
+                    // Don't ignore status@broadcast - we need to process status updates
+                    return jid.includes('@newsletter');
                 },
                 getMessage: async (key) => {
                     try {
@@ -787,36 +801,24 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             try {
                 const { messages, type } = m;
                 
+                botLogger.log('DEBUG', `📨 Received ${messages?.length || 0} message(s) of type: ${type}`);
+                
                 if (!messages || !Array.isArray(messages)) {
                     return;
                 }
                 
-                // Separate status messages from regular messages
-                const statusMessages = [];
-                const regularMessages = [];
-                
+                // Log all message JIDs for debugging
                 for (const message of messages) {
-                    if (message.key.remoteJid === 'status@broadcast') {
-                        statusMessages.push(message);
-                    } else {
-                        regularMessages.push(message);
-                    }
+                    botLogger.log('DEBUG', `📨 Raw message: ${message.key?.remoteJid || 'unknown'} from ${message.key?.participant || 'unknown'}`);
                 }
                 
-                // Process status messages first (non-blocking)
-                if (statusMessages.length > 0) {
-                    this.processStatusMessages(statusMessages).catch(error => {
-                        botLogger.log('ERROR', 'Status processing error: ' + error.message);
-                    });
-                }
-                
-                // Process regular messages
-                if (regularMessages.length > 0) {
-                    await this.handleMessages({ messages: regularMessages, type });
-                }
+                // Process ALL messages through handleMessages
+                // Let handleMessages route status vs regular messages
+                await this.handleMessages({ messages: messages, type });
                 
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
+                botLogger.log('ERROR', "Stack: " + error.stack);
             }
         });
 
@@ -875,7 +877,12 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     // 📊 STATUS MESSAGE PROCESSING FUNCTION (NO COMMANDS)
     // ==============================
     async processStatusMessages(messages) {
-        if (!messages || messages.length === 0) return;
+        if (!messages || messages.length === 0) {
+            botLogger.log('STATUS', '❌ No messages to process');
+            return;
+        }
+        
+        botLogger.log('STATUS', `🎯 Processing ${messages.length} status message(s)`);
         
         // Skip if already processing
         if (this.isProcessingStatus) {
@@ -890,36 +897,45 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             for (const kay of messages) {
                 try {
                     // Skip if not a status message
-                    if (kay.key.remoteJid !== 'status@broadcast') continue;
-                    
-                    const statusId = kay.key.id || kay.key.remoteJid + Date.now();
-                    
-                    // Check if status was already processed (avoid duplicates)
-                    if (await this.store.isStatusProcessed(statusId)) {
-                        botLogger.log('STATUS', '⏭️ Status already processed, skipping');
+                    if (kay.key.remoteJid !== 'status@broadcast') {
+                        botLogger.log('DEBUG', `Skipping non-status message: ${kay.key.remoteJid}`);
                         continue;
                     }
                     
-                    botLogger.log('STATUS', `📊 Processing status from: ${kay.key.participant || 'unknown'}`);
+                    const statusId = kay.key.id || kay.key.remoteJid + Date.now();
+                    const sender = kay.key.participant || kay.participant || 'unknown';
+                    
+                    botLogger.log('STATUS', `📊 Processing status #${statusId} from: ${sender}`);
+                    
+                    // Check if status was already processed (avoid duplicates)
+                    if (await this.store.isStatusProcessed(statusId)) {
+                        botLogger.log('STATUS', `⏭️ Status ${statusId} already processed, skipping`);
+                        continue;
+                    }
                     
                     // Auto-view status (from config)
                     if (this.autoStatusView === true) {
                         try {
+                            botLogger.log('STATUS', `👁️ Attempting to view status from ${sender}`);
                             await this.sock.readMessages([kay.key]);
-                            botLogger.log('STATUS', '👁️ Status viewed');
+                            botLogger.log('STATUS', `✅ Status viewed from ${sender}`);
                             await this.store.markStatusAsProcessed(statusId);
                         } catch (viewError) {
-                            botLogger.log('ERROR', 'Failed to view status: ' + viewError.message);
+                            botLogger.log('ERROR', `Failed to view status from ${sender}: ` + viewError.message);
                         }
+                    } else {
+                        botLogger.log('STATUS', `⏭️ Auto-view disabled, skipping status from ${sender}`);
                     }
                     
                     // Auto-status react (from config)
                     if (this.autoStatusReact === true && this.autoStatusView === true) {
                         try {
-                            const reactionEmoji = this.statusEmoji || '💚';
+                            const reactionEmoji = this.functions.getStatusEmoji(this.statusEmoji);
                             const participant = kay.key.participant || kay.participant;
                             const botJid = this.functions.decodeJid(this.sock.user.id);
                             const messageId = kay.key.id;
+                            
+                            botLogger.log('STATUS', `❤️ Attempting to react to status from ${sender} with ${reactionEmoji}`);
                             
                             if (participant && messageId && kay.key.id && kay.key.remoteJid) {
                                 await this.sock.sendMessage(
@@ -936,11 +952,15 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                                     },
                                     { statusJidList: [participant, botJid] }
                                 );
-                                botLogger.log('STATUS', `❤️ Reacted to status with ${reactionEmoji}`);
+                                botLogger.log('STATUS', `✅ Reacted to status from ${sender} with ${reactionEmoji}`);
+                            } else {
+                                botLogger.log('ERROR', `Missing required fields for reacting to status from ${sender}`);
                             }
                         } catch (reactError) {
-                            botLogger.log('ERROR', 'Failed to react to status: ' + reactError.message);
+                            botLogger.log('ERROR', `Failed to react to status from ${sender}: ` + reactError.message);
                         }
+                    } else if (this.autoStatusReact === false) {
+                        botLogger.log('STATUS', `⏭️ Auto-react disabled, skipping reaction for ${sender}`);
                     }
                     
                     // Small delay to prevent rate limiting
@@ -958,10 +978,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             this.isProcessingStatus = false;
             this.lastStatusProcessTime = Date.now();
             
+            botLogger.log('STATUS', `✅ Finished processing batch of status messages`);
+            
             // Process any queued status messages
             if (this.statusProcessQueue.length > 0) {
                 const queuedMessages = [...this.statusProcessQueue];
                 this.statusProcessQueue = [];
+                botLogger.log('STATUS', `🔄 Processing ${queuedMessages.length} queued status messages`);
                 setTimeout(() => {
                     this.processStatusMessages(queuedMessages).catch(error => {
                         botLogger.log('ERROR', 'Error processing queued status: ' + error.message);
@@ -1098,7 +1121,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
-    // FIXED: Handle owner messages correctly with LID support
+    // ==============================
+    // 🔄 FIXED: MESSAGE HANDLING WITH STATUS DETECTION
+    // ==============================
     async handleMessages(m) {
         if (!m.messages || !Array.isArray(m.messages)) {
             return;
@@ -1106,14 +1131,20 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         
         for (const message of m.messages) {
             try {
-                // Skip status broadcasts and newsletter messages
-                if (message.key.remoteJid === 'status@broadcast' || 
-                    message.key.remoteJid.includes('@newsletter') ||
-                    message.key.remoteJid.includes('@broadcast')) {
+                // Check if this is a status message
+                if (message.key.remoteJid === 'status@broadcast') {
+                    botLogger.log('STATUS', `📊 Direct status detection in handleMessages from: ${message.key.participant || 'unknown'}`);
+                    // Process status message immediately
+                    await this.processStatusMessages([message]);
                     continue;
                 }
-
-                // Store message
+                
+                // Skip newsletter messages only
+                if (message.key.remoteJid.includes('@newsletter')) {
+                    continue;
+                }
+                
+                // Store message (for non-status messages)
                 await this.store.setMessage(message.key, message);
 
                 const jid = message.key.remoteJid;
@@ -1121,8 +1152,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 const isGroup = jid.endsWith('@g.us');
                 const isFromMe = message.key.fromMe;
                 
-                // Log ALL messages
-                botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`);
+                // Log ALL messages including status
+                botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup}, JID: ${jid})`);
 
                 // Extract text from message
                 let text = '';
