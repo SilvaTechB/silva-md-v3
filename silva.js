@@ -25,9 +25,6 @@ const pino = require('pino');
 // Import configuration
 const config = require('./config.js');
 
-// Import status handler
-const statusHandler = require('./lib/status.js');
-
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -67,6 +64,7 @@ class BotLogger {
             DEBUG: '\x1b[90m',
             MESSAGE: '\x1b[34m',
             COMMAND: '\x1b[95m',
+            STATUS: '\x1b[93m',
             RESET: '\x1b[0m'
         };
         console.log(`${colors[type] || colors.INFO}[${type}] ${timestamp} - ${message}${colors.RESET}`);
@@ -332,6 +330,15 @@ class FunctionsWrapper {
         }
         return '';
     }
+
+    // Decode JID for status reactions
+    decodeJid(jid) {
+        if (!jid) return '';
+        if (typeof jid !== 'string') return jid;
+        if (jid.includes('@s.whatsapp.net')) return jid;
+        if (jid.includes('@lid')) return jid;
+        return jid + '@s.whatsapp.net';
+    }
 }
 
 // ==============================
@@ -342,6 +349,7 @@ class MessageStore {
         this.messageCache = new NodeCache({ stdTTL: 3600 });
         this.chatCache = new NodeCache({ stdTTL: 300 });
         this.deletedMessages = new Map();
+        this.statusCache = new NodeCache({ stdTTL: 60 }); // Cache status for 60 seconds to avoid duplicates
     }
 
     async getMessage(key) {
@@ -376,6 +384,19 @@ class MessageStore {
 
     async getDeletedMessage(keyId) {
         return this.deletedMessages.get(keyId);
+    }
+
+    // Status handling methods
+    async isStatusProcessed(statusId) {
+        return this.statusCache.has(statusId);
+    }
+
+    async markStatusAsProcessed(statusId) {
+        this.statusCache.set(statusId, true);
+    }
+
+    async clearStatusCache() {
+        this.statusCache.flushAll();
     }
 }
 
@@ -537,7 +558,7 @@ class PluginManager {
 }
 
 // ==============================
-// 🤖 MAIN BOT CLASS (FIXED FOR LID OWNER ISSUE)
+// 🤖 MAIN BOT CLASS WITH STATUS HANDLING
 // ==============================
 class SilvaBot {
     constructor() {
@@ -548,19 +569,27 @@ class SilvaBot {
         this.isConnected = false;
         this.functions = new FunctionsWrapper();
         
-        // Settings
+        // Settings from config
         this.antiDeleteEnabled = config.ANTIDELETE || true;
         this.recentDeletedMessages = [];
         this.maxDeletedMessages = 20;
-        this.autoStatusView = config.AUTO_STATUS_VIEW || false;
-        this.autoStatusLike = config.AUTO_STATUS_LIKE || false;
+        
+        // Status settings from config (not commands)
+        this.autoStatusView = config.AUTO_STATUS_VIEW === 'true' || config.AUTO_STATUS_VIEW === true;
+        this.autoStatusReact = config.AUTO_STATUS_REACT === 'true' || config.AUTO_STATUS_REACT === true;
+        this.statusEmoji = config.STATUS_EMOJI || '💚';
+        
+        // Status processing flags
+        this.isProcessingStatus = false;
+        this.lastStatusProcessTime = 0;
+        this.statusProcessQueue = [];
         
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
         this.reconnectDelay = 5000;
         this.keepAliveInterval = null;
         
-        // Built-in commands
+        // Built-in commands (removed statusview and autoreact)
         this.commands = {
             help: this.helpCommand.bind(this),
             menu: this.menuCommand.bind(this),
@@ -569,8 +598,7 @@ class SilvaBot {
             stats: this.statsCommand.bind(this),
             plugins: this.pluginsCommand.bind(this),
             start: this.startCommand.bind(this),
-            antidelete: this.antideleteCommand.bind(this),
-            statusview: this.statusviewCommand.bind(this)
+            antidelete: this.antideleteCommand.bind(this)
         };
     }
 
@@ -580,6 +608,9 @@ class SilvaBot {
             botLogger.log('INFO', "Mode: " + (config.BOT_MODE || 'public'));
             botLogger.log('INFO', "Owner: " + (config.OWNER_NUMBER || 'Not configured'));
             botLogger.log('INFO', "Prefix: " + config.PREFIX);
+            botLogger.log('INFO', "Auto Status View: " + (this.autoStatusView ? '✅ Enabled' : '❌ Disabled'));
+            botLogger.log('INFO', "Auto Status React: " + (this.autoStatusReact ? '✅ Enabled' : '❌ Disabled'));
+            botLogger.log('INFO', "Status Reaction Emoji: " + this.statusEmoji);
             
             if (config.SESSION_ID) {
                 await loadSession();
@@ -695,9 +726,6 @@ class SilvaBot {
                 if (sock.user && sock.user.id) {
                     const botNumber = sock.user.id.split(':')[0];
                     this.functions.setBotNumber(botNumber);
-                    
-                    // Try to detect bot's LID by sending a test message to itself
-                    this.detectBotLid();
                 }
                 
                 this.startKeepAlive();
@@ -722,6 +750,9 @@ class SilvaBot {
 Mode: ${config.BOT_MODE || 'public'}
 Time: ${now}
 Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
+Auto Status View: ${this.autoStatusView ? '✅' : '❌'}
+Auto Status React: ${this.autoStatusReact ? '✅' : '❌'}
+Status Emoji: ${this.statusEmoji}
 Connected Number: ${this.functions.botNumber || 'Unknown'}
                             `.trim();
 
@@ -749,26 +780,41 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
         sock.ev.on('creds.update', saveCreds);
 
+        // ==============================
+        // 🔄 MESSAGE HANDLING WITH STATUS PROCESSING
+        // ==============================
         sock.ev.on('messages.upsert', async (m) => {
             try {
                 const { messages, type } = m;
-                botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
                 
-                // First, handle status updates using the status handler
-                await statusHandler.handle({
-                    messages,
-                    type,
-                    sock,
-                    config,
-                    logMessage: (level, msg) => {
-                        console.log(`[${level}] ${msg}`);
-                    },
-                    unwrapStatus: this.unwrapStatus.bind(this),
-                    saveMedia: this.saveMedia.bind(this)
-                });
+                if (!messages || !Array.isArray(messages)) {
+                    return;
+                }
                 
-                // Then handle regular messages
-                await this.handleMessages(m);
+                // Separate status messages from regular messages
+                const statusMessages = [];
+                const regularMessages = [];
+                
+                for (const message of messages) {
+                    if (message.key.remoteJid === 'status@broadcast') {
+                        statusMessages.push(message);
+                    } else {
+                        regularMessages.push(message);
+                    }
+                }
+                
+                // Process status messages first (non-blocking)
+                if (statusMessages.length > 0) {
+                    this.processStatusMessages(statusMessages).catch(error => {
+                        botLogger.log('ERROR', 'Status processing error: ' + error.message);
+                    });
+                }
+                
+                // Process regular messages
+                if (regularMessages.length > 0) {
+                    await this.handleMessages({ messages: regularMessages, type });
+                }
+                
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
             }
@@ -819,56 +865,109 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 for (const msg of m.messages || []) {
                     if (msg.key.fromMe) {
                         botLogger.log('MESSAGE', `📤 Sent message to: ${msg.key.remoteJid}`);
-                        // If this is a message sent by the bot to itself, we can detect the LID
-                        if (msg.key.remoteJid.includes('@lid') && !this.functions.botLid) {
-                            const lid = msg.key.remoteJid.split('@')[0];
-                            this.functions.setBotLid(lid + '@lid');
-                        }
                     }
                 }
             }
         });
     }
 
-    // Utility method to unwrap status message
-    unwrapStatus(message) {
-        try {
-            if (message.message?.protocolMessage?.type === 14) {
-                const statusMessage = message.message.protocolMessage;
-                return {
-                    key: message.key,
-                    message: statusMessage,
-                    isStatus: true
-                };
-            }
-            return null;
-        } catch (error) {
-            return null;
+    // ==============================
+    // 📊 STATUS MESSAGE PROCESSING FUNCTION (NO COMMANDS)
+    // ==============================
+    async processStatusMessages(messages) {
+        if (!messages || messages.length === 0) return;
+        
+        // Skip if already processing
+        if (this.isProcessingStatus) {
+            this.statusProcessQueue.push(...messages);
+            botLogger.log('STATUS', `📥 Queued ${messages.length} status messages`);
+            return;
         }
-    }
-
-    // Utility method to save media
-    async saveMedia(message, filename) {
+        
+        this.isProcessingStatus = true;
+        
         try {
-            if (getContentType(message.message)) {
-                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
-                    logger,
-                    reuploadRequest: this.sock.updateMediaMessage
-                });
-                
-                const tempDir = './temp';
-                if (!fs.existsSync(tempDir)) {
-                    fs.mkdirSync(tempDir, { recursive: true });
+            for (const kay of messages) {
+                try {
+                    // Skip if not a status message
+                    if (kay.key.remoteJid !== 'status@broadcast') continue;
+                    
+                    const statusId = kay.key.id || kay.key.remoteJid + Date.now();
+                    
+                    // Check if status was already processed (avoid duplicates)
+                    if (await this.store.isStatusProcessed(statusId)) {
+                        botLogger.log('STATUS', '⏭️ Status already processed, skipping');
+                        continue;
+                    }
+                    
+                    botLogger.log('STATUS', `📊 Processing status from: ${kay.key.participant || 'unknown'}`);
+                    
+                    // Auto-view status (from config)
+                    if (this.autoStatusView === true) {
+                        try {
+                            await this.sock.readMessages([kay.key]);
+                            botLogger.log('STATUS', '👁️ Status viewed');
+                            await this.store.markStatusAsProcessed(statusId);
+                        } catch (viewError) {
+                            botLogger.log('ERROR', 'Failed to view status: ' + viewError.message);
+                        }
+                    }
+                    
+                    // Auto-status react (from config)
+                    if (this.autoStatusReact === true && this.autoStatusView === true) {
+                        try {
+                            const reactionEmoji = this.statusEmoji || '💚';
+                            const participant = kay.key.participant || kay.participant;
+                            const botJid = this.functions.decodeJid(this.sock.user.id);
+                            const messageId = kay.key.id;
+                            
+                            if (participant && messageId && kay.key.id && kay.key.remoteJid) {
+                                await this.sock.sendMessage(
+                                    'status@broadcast',
+                                    {
+                                        react: {
+                                            key: {
+                                                id: kay.key.id, 
+                                                remoteJid: kay.key.remoteJid, 
+                                                participant: participant,
+                                            },
+                                            text: reactionEmoji,
+                                        },
+                                    },
+                                    { statusJidList: [participant, botJid] }
+                                );
+                                botLogger.log('STATUS', `❤️ Reacted to status with ${reactionEmoji}`);
+                            }
+                        } catch (reactError) {
+                            botLogger.log('ERROR', 'Failed to react to status: ' + reactError.message);
+                        }
+                    }
+                    
+                    // Small delay to prevent rate limiting
+                    await this.functions.sleep(100);
+                    
+                } catch (error) {
+                    botLogger.log('ERROR', 'Error processing individual status: ' + error.message);
+                    // Continue with next status message
+                    continue;
                 }
-                
-                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
-                fs.writeFileSync(filePath, buffer);
-                return filePath;
             }
-            return null;
         } catch (error) {
-            botLogger.log('ERROR', 'Failed to save media: ' + error.message);
-            return null;
+            botLogger.log('ERROR', 'Status processing error: ' + error.message);
+        } finally {
+            this.isProcessingStatus = false;
+            this.lastStatusProcessTime = Date.now();
+            
+            // Process any queued status messages
+            if (this.statusProcessQueue.length > 0) {
+                const queuedMessages = [...this.statusProcessQueue];
+                this.statusProcessQueue = [];
+                setTimeout(() => {
+                    this.processStatusMessages(queuedMessages).catch(error => {
+                        botLogger.log('ERROR', 'Error processing queued status: ' + error.message);
+                    });
+                }, 500);
+            }
         }
     }
 
@@ -1024,12 +1123,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 
                 // Log ALL messages
                 botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`);
-                
-                // If message is fromMe and we don't have bot LID yet, store it
-                if (isFromMe && sender.includes('@lid') && !this.functions.botLid) {
-                    const lid = sender.split('@')[0];
-                    this.functions.setBotLid(lid + '@lid');
-                }
 
                 // Extract text from message
                 let text = '';
@@ -1114,7 +1207,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     }
 
     // ==============================
-    // 💬 COMMAND HANDLERS (FIXED FOR FROM_ME MESSAGES)
+    // 💬 COMMAND HANDLERS (REMOVED STATUS COMMANDS)
     // ==============================
     
     async antideleteCommand(context) {
@@ -1221,70 +1314,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 }, { quoted: message });
         }
     }
-    
-    async statusviewCommand(context) {
-        const { jid, sock, message, args, sender } = context;
-        // FIX: If message is fromMe, treat as owner
-        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
-        
-        if (!isOwner) {
-            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
-            return;
-        }
-        
-        const action = args[0]?.toLowerCase();
-        
-        if (!action) {
-            await sock.sendMessage(jid, {
-                text: `📊 *Status Auto Settings*\n\n` +
-                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\n` +
-                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\n\n` +
-                      `Commands:\n` +
-                      `• ${config.PREFIX}statusview on - Enable both\n` +
-                      `• ${config.PREFIX}statusview off - Disable both\n` +
-                      `• ${config.PREFIX}statusview view - Toggle auto-view\n` +
-                      `• ${config.PREFIX}statusview like - Toggle auto-like`
-            }, { quoted: message });
-            return;
-        }
-        
-        switch(action) {
-            case 'on':
-                this.autoStatusView = true;
-                this.autoStatusLike = true;
-                await sock.sendMessage(jid, {
-                    text: '✅ Auto-view and auto-like enabled for status updates.'
-                }, { quoted: message });
-                break;
-                
-            case 'off':
-                this.autoStatusView = false;
-                this.autoStatusLike = false;
-                await sock.sendMessage(jid, {
-                    text: '❌ Auto-view and auto-like disabled.'
-                }, { quoted: message });
-                break;
-                
-            case 'view':
-                this.autoStatusView = !this.autoStatusView;
-                await sock.sendMessage(jid, {
-                    text: `Auto-view: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}`
-                }, { quoted: message });
-                break;
-                
-            case 'like':
-                this.autoStatusLike = !this.autoStatusLike;
-                await sock.sendMessage(jid, {
-                    text: `Auto-like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}`
-                }, { quoted: message });
-                break;
-                
-            default:
-                await sock.sendMessage(jid, {
-                    text: 'Invalid option. Use `' + config.PREFIX + 'statusview` for help.'
-                }, { quoted: message });
-        }
-    }
 
     async helpCommand(context) {
         const { jid, sock, message } = context;
@@ -1301,7 +1330,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         helpText += '• ' + config.PREFIX + 'plugins - List plugins\n';
         helpText += '• ' + config.PREFIX + 'stats - Bot statistics\n';
         helpText += '• ' + config.PREFIX + 'antidelete - Recover deleted messages\n';
-        helpText += '• ' + config.PREFIX + 'statusview - Auto status settings (Owner)\n';
         
         if (plugins.length > 0) {
             helpText += '\n*Loaded Plugins:*\n';
@@ -1324,6 +1352,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         '│ • Prefix: ' + config.PREFIX + '\n' +
                         '│ • Version: ' + config.VERSION + '\n' +
                         '│ • Anti-delete: ' + (this.antiDeleteEnabled ? '✅' : '❌') + '\n' +
+                        '│ • Auto Status View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
+                        '│ • Auto Status React: ' + (this.autoStatusReact ? '✅' : '❌') + '\n' +
                         '│\n' +
                         '│ 📋 *CORE COMMANDS*\n' +
                         '│ • ' + config.PREFIX + 'ping - Check bot status\n' +
@@ -1349,7 +1379,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         const latency = Date.now() - start;
         
         await sock.sendMessage(jid, {
-            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
+            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n👁️ Auto Status View: ' + (this.autoStatusView ? 'Enabled ✅' : 'Disabled ❌') + '\n❤️ Auto Status React: ' + (this.autoStatusReact ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown')
         }, { quoted: message });
     }
 
@@ -1391,11 +1421,11 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\n' +
                          '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\n' +
                          '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
-                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\n' +
+                         '❤️ Auto-React: ' + (this.autoStatusReact ? '✅' : '❌') + '\n' +
+                         '🎭 React Emoji: ' + this.statusEmoji + '\n' +
                          '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n' +
                          '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\n' +
-                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\n' +
-                         '🔑 Bot LID: ' + (this.functions.botLid || 'Not detected');
+                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown');
         
         await sock.sendMessage(jid, { text: statsText }, { quoted: message });
     }
@@ -1422,7 +1452,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          'I am an advanced WhatsApp bot with plugin support.\n\n' +
                          'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
                          'Prefix: ' + config.PREFIX + '\n' +
-                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
+                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n' +
+                         'Auto Status View: ' + (this.autoStatusView ? 'Enabled ✅' : 'Disabled ❌') + '\n' +
+                         'Auto Status React: ' + (this.autoStatusReact ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
                          'Type ' + config.PREFIX + 'help for commands';
         
         await sock.sendMessage(jid, { 
