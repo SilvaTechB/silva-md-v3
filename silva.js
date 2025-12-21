@@ -40,7 +40,7 @@ const globalContextInfo = {
 // 🪵 LOGGER SECTION (ENHANCED FOR DEBUGGING)
 // ==============================
 const logger = pino({
-    level: config.DEBUG_MODE ? 'debug' : 'error',
+    level: config.DEBUG_MODE ? 'debug' : 'fatal', // Changed from 'error' to 'fatal'
     transport: config.DEBUG_MODE ? {
         target: 'pino-pretty',
         options: {
@@ -723,6 +723,18 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
         });
 
+        // Suppress status decryption errors (they're normal)
+        const originalConsoleError = console.error;
+        console.error = function(...args) {
+            const msg = args.join(' ');
+            if (msg.includes('No session found to decrypt message') ||
+                msg.includes('failed to decrypt message') ||
+                msg.includes('status@broadcast')) {
+                return; // Suppress status decryption errors
+            }
+            originalConsoleError.apply(console, args);
+        };
+
         sock.ev.on('creds.update', saveCreds);
 
         // ==============================
@@ -732,40 +744,36 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             try {
                 const { messages, type } = m;
                 
-                if (!messages || !Array.isArray(messages)) {
-                    return;
-                }
+                if (!messages || !Array.isArray(messages)) return;
                 
-                // Separate status messages from regular messages
+                // Separate status from regular messages
                 const statusMessages = [];
                 const regularMessages = [];
                 
                 for (const message of messages) {
                     if (message.key.remoteJid === 'status@broadcast') {
                         statusMessages.push(message);
-                    } else {
+                    } else if (!message.key.remoteJid.includes('@newsletter') && 
+                               !message.key.remoteJid.includes('@broadcast')) {
                         regularMessages.push(message);
                     }
                 }
                 
-                // INSTANT STATUS PROCESSING - Fire and forget, no waiting
+                // INSTANT STATUS PROCESSING - Fire immediately, no await
                 if (statusMessages.length > 0) {
-                    // Process each status immediately without queuing or awaiting
                     for (const msg of statusMessages) {
-                        // Fire and forget - don't await
-                        this.processStatusInstant(msg).catch(err => {
-                            botLogger.log('ERROR', 'Status error: ' + err.message);
-                        });
+                        // Fire and forget - don't await, don't log errors
+                        this.processStatusInstant(msg).catch(() => {});
                     }
                 }
                 
-                // Process regular messages normally
+                // Process regular messages
                 if (regularMessages.length > 0) {
                     await this.handleMessages({ messages: regularMessages, type });
                 }
                 
             } catch (error) {
-                botLogger.log('ERROR', "Messages upsert error: " + error.message);
+                // Silent fail
             }
         });
 
@@ -845,63 +853,50 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             
             if (!statusId || !participant) return;
             
-            // Check if status was already processed (avoid duplicates)
-            if (await this.store.isStatusProcessed(statusId)) {
+            // Skip if already processed
+            if (this.statusProcessing.has(statusId) || await this.store.isStatusProcessed(statusId)) {
                 return;
             }
             
-            // Mark as being processed immediately
+            // Mark immediately
             this.statusProcessing.add(statusId);
             await this.store.markStatusAsProcessed(statusId);
             
-            // Execute view and react in PARALLEL (not sequential)
-            const tasks = [];
+            // Get random emoji if multiple configured
+            let reactionEmoji = this.statusEmoji || '💚';
+            if (reactionEmoji.includes(',')) {
+                const emojis = reactionEmoji.split(',').map(e => e.trim());
+                reactionEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+            }
             
-            // Auto-view status
+            const botJid = this.functions.decodeJid(this.sock.user.id);
+            
+            // Execute view and react in PARALLEL (both fire instantly)
+            const promises = [];
+            
             if (this.autoStatusView === true) {
-                tasks.push(
-                    this.sock.readMessages([message.key])
-                        .then(() => {
-                            botLogger.log('STATUS', `👁️ Viewed status from ${participant}`);
-                        })
-                        .catch(err => {
-                            botLogger.log('ERROR', 'View error: ' + err.message);
-                        })
+                promises.push(
+                    this.sock.readMessages([message.key]).catch(() => {})
                 );
             }
             
-            // Auto-react to status
             if (this.autoStatusReact === true) {
-                const reactionEmoji = this.statusEmoji || '💚';
-                const botJid = this.functions.decodeJid(this.sock.user.id);
-                
-                tasks.push(
-                    this.sock.sendMessage(
-                        'status@broadcast',
-                        {
-                            react: {
-                                key: {
-                                    id: message.key.id, 
-                                    remoteJid: message.key.remoteJid, 
-                                    participant: participant,
-                                },
-                                text: reactionEmoji,
-                            },
+                promises.push(
+                    this.sock.sendMessage('status@broadcast', {
+                        react: {
+                            key: message.key,
+                            text: reactionEmoji,
                         },
-                        { statusJidList: [participant, botJid] }
-                    )
-                    .then(() => {
-                        botLogger.log('STATUS', `❤️ Reacted to ${participant} with ${reactionEmoji}`);
-                    })
-                    .catch(err => {
-                        botLogger.log('ERROR', 'React error: ' + err.message);
-                    })
+                    }, { statusJidList: [participant, botJid] }).catch(() => {})
                 );
             }
             
-            // Execute both in parallel - fire and forget
-            if (tasks.length > 0) {
-                Promise.allSettled(tasks).finally(() => {
+            // Fire and forget - don't wait
+            if (promises.length > 0) {
+                Promise.allSettled(promises).then(() => {
+                    botLogger.log('STATUS', `✅ Processed status from ${participant.split('@')[0]}`);
+                    this.statusProcessing.delete(statusId);
+                }).catch(() => {
                     this.statusProcessing.delete(statusId);
                 });
             } else {
@@ -909,7 +904,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
             
         } catch (error) {
-            botLogger.log('ERROR', 'Status processing error: ' + error.message);
+            // Silent fail for decryption errors
             const statusId = message.key?.id;
             if (statusId) {
                 this.statusProcessing.delete(statusId);
@@ -1051,6 +1046,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         
         for (const message of m.messages) {
             try {
+                // Skip invalid messages
+                if (!message.key || !message.key.remoteJid) continue;
+                
                 // Skip status broadcasts and newsletter messages
                 if (message.key.remoteJid === 'status@broadcast' || 
                     message.key.remoteJid.includes('@newsletter') ||
@@ -1078,8 +1076,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     text = message.message.videoMessage.caption;
                 } else if (message.message?.documentMessage?.caption) {
                     text = message.message.documentMessage.caption;
-                } else if (message.message?.audioMessage) {
+                } else if (message.message?.audioMessage?.caption) {
                     text = message.message.audioMessage?.caption || '';
+                }
+
+                // Log received message
+                if (text) {
+                    botLogger.log('MESSAGE', `📨 Received: "${text.substring(0, 50)}" from ${sender.split('@')[0]}`);
                 }
 
                 // Check if message starts with prefix
@@ -1088,14 +1091,18 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     
                     const isOwner = isFromMe ? true : this.functions.isOwner(sender);
                     const cmdText = text.slice(config.PREFIX.length).trim();
+                    const args = cmdText.split(/ +/);
+                    const command = args[0].toLowerCase();
                     
-                    // Try plugin commands first (no typing indicator for speed)
+                    botLogger.log('COMMAND', `🔄 Processing: ${command} with args: ${args.slice(1).join(', ')}`);
+                    
+                    // Try plugin commands first
                     const executed = await this.pluginManager.executeCommand({
                         text: cmdText,
                         jid,
                         sender,
                         isGroup,
-                        args: cmdText.split(/ +/).slice(1),
+                        args: args.slice(1),
                         message,
                         sock: this.sock,
                         bot: this
@@ -1103,28 +1110,30 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     
                     // If no plugin handled it, try built-in commands
                     if (!executed) {
-                        const args = cmdText.split(/ +/);
-                        const command = args.shift().toLowerCase();
+                        botLogger.log('COMMAND', `🔍 Checking built-in commands for: ${command}`);
                         
                         if (this.commands[command]) {
-                            botLogger.log('COMMAND', `🛠️ Executing built-in command: ${command} for ${sender}`);
+                            botLogger.log('COMMAND', `✅ Executing built-in: ${command}`);
                             await this.commands[command]({
                                 jid,
                                 sender,
                                 isGroup,
-                                args,
+                                args: args.slice(1),
                                 message,
                                 sock: this.sock,
                                 bot: this
                             });
                         } else {
-                            // Auto reply for unknown commands
+                            // Unknown command
+                            botLogger.log('COMMAND', `❌ Unknown command: ${command}`);
                             if (config.AUTO_REPLY) {
                                 await this.sock.sendMessage(jid, {
                                     text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
                                 }, { quoted: message });
                             }
                         }
+                    } else {
+                        botLogger.log('COMMAND', `✅ Plugin executed: ${command}`);
                     }
                 }
 
