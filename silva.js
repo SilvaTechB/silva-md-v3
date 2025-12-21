@@ -746,11 +746,20 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 
                 if (!messages || !Array.isArray(messages)) return;
                 
+                // ADD THIS DEBUG LOGGING
+                console.log('📥 RAW MESSAGE EVENT:', {
+                    type: type,
+                    count: messages.length,
+                    jids: messages.map(msg => msg.key.remoteJid)
+                });
+                
                 // Separate status from regular messages
                 const statusMessages = [];
                 const regularMessages = [];
                 
                 for (const message of messages) {
+                    console.log('🔍 Processing message from:', message.key.remoteJid);
+                    
                     if (message.key.remoteJid === 'status@broadcast') {
                         statusMessages.push(message);
                     } else if (!message.key.remoteJid.includes('@newsletter') && 
@@ -759,21 +768,24 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     }
                 }
                 
+                console.log('✅ Status messages:', statusMessages.length);
+                console.log('✅ Regular messages:', regularMessages.length);
+                
                 // INSTANT STATUS PROCESSING - Fire immediately, no await
                 if (statusMessages.length > 0) {
                     for (const msg of statusMessages) {
-                        // Fire and forget - don't await, don't log errors
                         this.processStatusInstant(msg).catch(() => {});
                     }
                 }
                 
                 // Process regular messages
                 if (regularMessages.length > 0) {
+                    console.log('📨 ABOUT TO HANDLE REGULAR MESSAGES');
                     await this.handleMessages({ messages: regularMessages, type });
                 }
                 
             } catch (error) {
-                // Silent fail
+                console.log('❌ ERROR in messages.upsert:', error);
             }
         });
 
@@ -929,55 +941,42 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
-    // Handle single message delete
+    // Handle single message delete - AUTOMATIC, NO COMMAND
     async handleMessageDelete(update) {
         if (!this.antiDeleteEnabled || !update.key) return;
         
         try {
             const deletedMessage = await this.store.getMessage(update.key);
             if (deletedMessage && !deletedMessage.key?.fromMe) {
-                await this.store.saveDeletedMessage(update.key, deletedMessage);
-                
                 const sender = deletedMessage.key.participant || deletedMessage.key.remoteJid;
                 const text = this.functions.extractText(deletedMessage.message);
+                const jid = update.key.remoteJid;
                 
-                if (text || deletedMessage.message) {
-                    this.recentDeletedMessages.unshift({
-                        key: update.key,
-                        sender: sender,
-                        senderName: await this.getContactName(sender),
-                        text: text,
-                        message: deletedMessage.message,
-                        timestamp: deletedMessage.messageTimestamp,
-                        deletedAt: Date.now()
-                    });
-                    
-                    if (this.recentDeletedMessages.length > this.maxDeletedMessages) {
-                        this.recentDeletedMessages.pop();
-                    }
-                    
-                    const jid = update.key.remoteJid;
+                // Automatically forward the deleted message
+                if (deletedMessage.message) {
+                    // Send in same chat
                     if (jid.endsWith('@g.us')) {
+                        // In groups, show who deleted
                         await this.sock.sendMessage(jid, {
-                            text: `🚨 *Message Deleted*\n\n` +
-                                  `👤 *Sender:* @${sender.split('@')[0]}\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
-                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`,
+                            text: `🚨 @${sender.split('@')[0]} deleted a message:`,
                             mentions: [sender]
                         });
-                    } else {
-                        await this.sock.sendMessage(jid, {
-                            text: `🚨 *You deleted a message*\n\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
-                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`
-                        });
                     }
                     
-                    botLogger.log('INFO', 'Anti-delete: Saved deleted message from ' + sender);
+                    // Forward the actual message
+                    await this.sock.sendMessage(jid, deletedMessage.message);
+                    
+                    botLogger.log('INFO', '🚨 Anti-delete: Forwarded deleted message from ' + sender);
+                } else if (text) {
+                    // Text only message
+                    await this.sock.sendMessage(jid, {
+                        text: `🚨 Deleted message:\n\n${text}`,
+                        mentions: [sender]
+                    });
                 }
             }
         } catch (error) {
-            botLogger.log('ERROR', 'Anti-delete error: ' + error.message);
+            // Silent fail
         }
     }
 
@@ -1040,9 +1039,14 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     }
 
     async handleMessages(m) {
+        console.log('🎯 handleMessages CALLED!');
+        
         if (!m.messages || !Array.isArray(m.messages)) {
+            console.log('❌ No messages in handleMessages');
             return;
         }
+        
+        console.log('✅ Messages to process:', m.messages.length);
         
         for (const message of m.messages) {
             try {
@@ -1082,6 +1086,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
                 // Log received message
                 if (text) {
+                    console.log('📝 TEXT EXTRACTED:', text);
+                    console.log('🔍 STARTS WITH PREFIX?', text.startsWith(config.PREFIX));
+                    console.log('📌 PREFIX IS:', config.PREFIX);
                     botLogger.log('MESSAGE', `📨 Received: "${text.substring(0, 50)}" from ${sender.split('@')[0]}`);
                 }
 
