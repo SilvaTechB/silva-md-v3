@@ -344,6 +344,11 @@ class FunctionsWrapper {
     getStatusEmoji(configString) {
         if (!configString) return '💚';
         
+        // Ensure it's a string
+        if (typeof configString !== 'string') {
+            configString = String(configString);
+        }
+        
         // Split by comma and trim each emoji
         const emojis = configString.split(',').map(e => e.trim()).filter(e => e);
         if (emojis.length === 0) return '💚';
@@ -590,7 +595,7 @@ class SilvaBot {
         // Status settings from config (not commands)
         this.autoStatusView = config.AUTO_STATUS_VIEW === 'true' || config.AUTO_STATUS_VIEW === true;
         this.autoStatusReact = config.AUTO_STATUS_REACT === 'true' || config.AUTO_STATUS_REACT === true;
-        this.statusEmoji = config.STATUS_EMOJI || '💚';
+        this.statusEmoji = String(config.STATUS_EMOJI || '💚'); // Ensure it's a string
         
         // Status processing flags
         this.isProcessingStatus = false;
@@ -930,7 +935,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     // Auto-status react (from config)
                     if (this.autoStatusReact === true && this.autoStatusView === true) {
                         try {
-                            const reactionEmoji = this.functions.getStatusEmoji(this.statusEmoji);
+                            // FIX: Ensure statusEmoji is a string
+                            const statusEmojiString = String(this.statusEmoji || '💚');
+                            const reactionEmoji = this.functions.getStatusEmoji(statusEmojiString);
                             const participant = kay.key.participant || kay.participant;
                             const botJid = this.functions.decodeJid(this.sock.user.id);
                             const messageId = kay.key.id;
@@ -938,6 +945,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                             botLogger.log('STATUS', `❤️ Attempting to react to status from ${sender} with ${reactionEmoji}`);
                             
                             if (participant && messageId && kay.key.id && kay.key.remoteJid) {
+                                // Wait a bit before reacting
+                                await this.functions.sleep(500);
+                                
                                 await this.sock.sendMessage(
                                     'status@broadcast',
                                     {
@@ -955,16 +965,20 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                                 botLogger.log('STATUS', `✅ Reacted to status from ${sender} with ${reactionEmoji}`);
                             } else {
                                 botLogger.log('ERROR', `Missing required fields for reacting to status from ${sender}`);
+                                botLogger.log('ERROR', `Participant: ${participant}, MessageId: ${messageId}, KeyId: ${kay.key.id}, RemoteJid: ${kay.key.remoteJid}`);
                             }
                         } catch (reactError) {
                             botLogger.log('ERROR', `Failed to react to status from ${sender}: ` + reactError.message);
+                            if (reactError.stack) {
+                                botLogger.log('ERROR', `React error stack: ${reactError.stack}`);
+                            }
                         }
                     } else if (this.autoStatusReact === false) {
                         botLogger.log('STATUS', `⏭️ Auto-react disabled, skipping reaction for ${sender}`);
                     }
                     
                     // Small delay to prevent rate limiting
-                    await this.functions.sleep(100);
+                    await this.functions.sleep(200);
                     
                 } catch (error) {
                     botLogger.log('ERROR', 'Error processing individual status: ' + error.message);
@@ -1134,8 +1148,10 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 // Check if this is a status message
                 if (message.key.remoteJid === 'status@broadcast') {
                     botLogger.log('STATUS', `📊 Direct status detection in handleMessages from: ${message.key.participant || 'unknown'}`);
-                    // Process status message immediately
-                    await this.processStatusMessages([message]);
+                    // Process status message immediately (non-blocking)
+                    this.processStatusMessages([message]).catch(error => {
+                        botLogger.log('ERROR', 'Error in processStatusMessages: ' + error.message);
+                    });
                     continue;
                 }
                 
