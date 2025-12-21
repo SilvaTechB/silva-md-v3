@@ -750,12 +750,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 
                 // INSTANT STATUS PROCESSING - Fire and forget, no waiting
                 if (statusMessages.length > 0) {
-                    // Process each status immediately without queuing
-                    statusMessages.forEach(message => {
-                        this.processStatusInstant(message).catch(error => {
-                            botLogger.log('ERROR', 'Instant status error: ' + error.message);
+                    // Process each status immediately without queuing or awaiting
+                    for (const msg of statusMessages) {
+                        // Fire and forget - don't await
+                        this.processStatusInstant(msg).catch(err => {
+                            botLogger.log('ERROR', 'Status error: ' + err.message);
                         });
-                    });
+                    }
                 }
                 
                 // Process regular messages normally
@@ -842,44 +843,40 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             const statusId = message.key.id;
             const participant = message.key.participant || message.participant;
             
-            if (!statusId || !participant) {
-                botLogger.log('STATUS', '⚠️ Invalid status message');
-                return;
-            }
+            if (!statusId || !participant) return;
             
             // Check if status was already processed (avoid duplicates)
             if (await this.store.isStatusProcessed(statusId)) {
-                botLogger.log('STATUS', `⏭️ Status ${statusId.substring(0, 10)}... already processed`);
                 return;
             }
             
-            // Mark as being processed
+            // Mark as being processed immediately
             this.statusProcessing.add(statusId);
+            await this.store.markStatusAsProcessed(statusId);
             
-            botLogger.log('STATUS', `🎯 Processing status from: ${participant}`);
+            // Execute view and react in PARALLEL (not sequential)
+            const tasks = [];
             
-            // Auto-view status (from config) - INSTANT
+            // Auto-view status
             if (this.autoStatusView === true) {
-                try {
-                    // Mark as viewed instantly
-                    await this.sock.readMessages([message.key]);
-                    botLogger.log('STATUS', `👁️ Viewed status from ${participant}`);
-                    
-                    // Mark as processed after viewing
-                    await this.store.markStatusAsProcessed(statusId);
-                } catch (viewError) {
-                    botLogger.log('ERROR', 'Failed to view status: ' + viewError.message);
-                }
+                tasks.push(
+                    this.sock.readMessages([message.key])
+                        .then(() => {
+                            botLogger.log('STATUS', `👁️ Viewed status from ${participant}`);
+                        })
+                        .catch(err => {
+                            botLogger.log('ERROR', 'View error: ' + err.message);
+                        })
+                );
             }
             
-            // Auto-status react (from config) - INSTANT
+            // Auto-react to status
             if (this.autoStatusReact === true) {
-                try {
-                    const reactionEmoji = this.statusEmoji || '💚';
-                    const botJid = this.functions.decodeJid(this.sock.user.id);
-                    
-                    // React instantly after viewing
-                    await this.sock.sendMessage(
+                const reactionEmoji = this.statusEmoji || '💚';
+                const botJid = this.functions.decodeJid(this.sock.user.id);
+                
+                tasks.push(
+                    this.sock.sendMessage(
                         'status@broadcast',
                         {
                             react: {
@@ -892,20 +889,28 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                             },
                         },
                         { statusJidList: [participant, botJid] }
-                    );
-                    botLogger.log('STATUS', `❤️ Reacted to status from ${participant} with ${reactionEmoji}`);
-                } catch (reactError) {
-                    botLogger.log('ERROR', 'Failed to react to status: ' + reactError.message);
-                }
+                    )
+                    .then(() => {
+                        botLogger.log('STATUS', `❤️ Reacted to ${participant} with ${reactionEmoji}`);
+                    })
+                    .catch(err => {
+                        botLogger.log('ERROR', 'React error: ' + err.message);
+                    })
+                );
             }
             
-            // Remove from processing set
-            this.statusProcessing.delete(statusId);
+            // Execute both in parallel - fire and forget
+            if (tasks.length > 0) {
+                Promise.allSettled(tasks).finally(() => {
+                    this.statusProcessing.delete(statusId);
+                });
+            } else {
+                this.statusProcessing.delete(statusId);
+            }
             
         } catch (error) {
-            botLogger.log('ERROR', 'Instant status processing error: ' + error.message);
-            // Remove from processing set even on error
-            const statusId = message.key.id;
+            botLogger.log('ERROR', 'Status processing error: ' + error.message);
+            const statusId = message.key?.id;
             if (statusId) {
                 this.statusProcessing.delete(statusId);
             }
@@ -1084,10 +1089,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     const isOwner = isFromMe ? true : this.functions.isOwner(sender);
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
-                    // Send typing indicator
-                    await this.sock.sendPresenceUpdate('composing', jid);
-                    
-                    // Try plugin commands first
+                    // Try plugin commands first (no typing indicator for speed)
                     const executed = await this.pluginManager.executeCommand({
                         text: cmdText,
                         jid,
@@ -1098,9 +1100,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         sock: this.sock,
                         bot: this
                     });
-                    
-                    // Stop typing indicator
-                    await this.sock.sendPresenceUpdate('paused', jid);
                     
                     // If no plugin handled it, try built-in commands
                     if (!executed) {
