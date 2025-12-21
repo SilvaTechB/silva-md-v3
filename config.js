@@ -13,10 +13,10 @@ module.exports = {
     AUTO_REPLY: process.env.AUTO_REPLY === 'true',
     
     // Status Handler Settings
-    AUTO_VIEW_STATUS: process.env.AUTO_VIEW_STATUS === 'true',
-    AUTO_LIKE_STATUS: process.env.AUTO_LIKE_STATUS === 'true',
-    AUTO_LIKE_EMOJI: process.env.AUTO_LIKE_EMOJI ? 
-        process.env.AUTO_LIKE_EMOJI.split(',') : ['❤️', '😍', '🔥'],
+    AUTO_STATUS_VIEW: process.env.AUTO_STATUS_VIEW === 'true',
+    AUTO_STATUS_REACT: process.env.AUTO_STATUS_REACT === 'true',
+    STATUS_EMOJI: process.env.STATUS_EMOJI ? 
+        process.env.STATUS_EMOJI.split(',') : ['❤️', '😍', '🔥'],
     STATUS_REQUEST_KEYWORDS: process.env.STATUS_REQUEST_KEYWORDS ? 
         process.env.STATUS_REQUEST_KEYWORDS.split(',') : ['status', 'story', 'stories'],
     
