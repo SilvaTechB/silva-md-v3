@@ -1060,6 +1060,12 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     continue;
                 }
 
+                // FOR LID MESSAGES - Wait a bit for decryption
+                if (message.key.remoteJid.includes('@lid')) {
+                    console.log('⏳ LID message detected, waiting for decryption...');
+                    await this.functions.sleep(100); // 100ms delay for LID decryption
+                }
+
                 // Store message
                 await this.store.setMessage(message.key, message);
 
@@ -1068,20 +1074,40 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 const isGroup = jid.endsWith('@g.us');
                 const isFromMe = message.key.fromMe;
                 
-                // Extract text from message
+                // Extract text - ENHANCED VERSION
                 let text = '';
-                if (message.message?.conversation) {
-                    text = message.message.conversation;
-                } else if (message.message?.extendedTextMessage?.text) {
-                    text = message.message.extendedTextMessage.text;
-                } else if (message.message?.imageMessage?.caption) {
-                    text = message.message.imageMessage.caption;
-                } else if (message.message?.videoMessage?.caption) {
-                    text = message.message.videoMessage.caption;
-                } else if (message.message?.documentMessage?.caption) {
-                    text = message.message.documentMessage.caption;
-                } else if (message.message?.audioMessage?.caption) {
-                    text = message.message.audioMessage?.caption || '';
+                const msg = message.message;
+                
+                if (msg) {
+                    if (msg.conversation) {
+                        text = msg.conversation;
+                    } else if (msg.extendedTextMessage?.text) {
+                        text = msg.extendedTextMessage.text;
+                    } else if (msg.imageMessage?.caption) {
+                        text = msg.imageMessage.caption;
+                    } else if (msg.videoMessage?.caption) {
+                        text = msg.videoMessage.caption;
+                    } else if (msg.documentMessage?.caption) {
+                        text = msg.documentMessage.caption;
+                    } else if (msg.audioMessage?.caption) {
+                        text = msg.audioMessage?.caption || '';
+                    } else if (msg.templateButtonReplyMessage?.selectedId) {
+                        text = msg.templateButtonReplyMessage.selectedId;
+                    } else if (msg.listResponseMessage?.singleSelectReply?.selectedRowId) {
+                        text = msg.listResponseMessage.singleSelectReply.selectedRowId;
+                    }
+                }
+
+                // Debug logging
+                if (!text && msg) {
+                    console.log('⚠️ NO TEXT EXTRACTED FROM MESSAGE');
+                    console.log('📦 Message keys:', Object.keys(msg));
+                    // Try alternative extraction
+                    const firstKey = Object.keys(msg)[0];
+                    if (firstKey && msg[firstKey]?.text) {
+                        text = msg[firstKey].text;
+                        console.log('✅ Found text in:', firstKey);
+                    }
                 }
 
                 // Log received message
@@ -1090,6 +1116,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     console.log('🔍 STARTS WITH PREFIX?', text.startsWith(config.PREFIX));
                     console.log('📌 PREFIX IS:', config.PREFIX);
                     botLogger.log('MESSAGE', `📨 Received: "${text.substring(0, 50)}" from ${sender.split('@')[0]}`);
+                } else {
+                    console.log('⚠️ Empty text from:', jid);
                 }
 
                 // Check if message starts with prefix
