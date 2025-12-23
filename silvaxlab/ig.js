@@ -1,89 +1,87 @@
+// Instagram Downloader Plugin (Silva MD)
+
 const axios = require("axios");
 
 const handler = {
-    help: ["ig <instagram link>"],
-    tags: ["media", "downloader"],
-    command: /^(ig|instagram)$/i,
+    help: ["ig", "igdl", "instagram"],
+    tags: ["downloader", "media"],
+    command: /^(ig|igdl|instagram)$/i,
     group: false,
     admin: false,
     botAdmin: false,
     owner: false,
 
     execute: async ({ jid, sock, message, args }) => {
-        try {
-            const sender = message.key.participant || message.key.remoteJid;
-            const url = args[0];
+        const sender = message.key.participant || message.key.remoteJid;
+        const igUrl = args[0];
 
-            if (!url || !url.includes("instagram.com")) {
-                return await sock.sendMessage(jid, {
-                    text: "❌ Provide a valid Instagram link.\n\nExample:\n.ig https://www.instagram.com/reel/xxxx/",
-                    contextInfo: {
-                        mentionedJid: [sender]
-                    }
-                }, { quoted: message });
-            }
-
-            const api = `https://api.nekolabs.web.id/dwn/instagram?url=${encodeURIComponent(url)}`;
-            const { data } = await axios.get(api);
-
-            if (!data || !data.success || !data.result) {
-                return await sock.sendMessage(jid, {
-                    text: "❌ Failed to fetch Instagram media.",
-                    contextInfo: {
-                        mentionedJid: [sender]
-                    }
-                }, { quoted: message });
-            }
-
-            const media = Array.isArray(data.result) ? data.result : [data.result];
-
-            for (const item of media) {
-                if (!item.url) continue;
-
-                const isVideo = item.type === "video";
-
-                await sock.sendMessage(jid, isVideo ? {
-                    video: { url: item.url },
-                    caption: "📸 *Instagram Downloaded*",
-                    contextInfo: {
-                        mentionedJid: [sender],
-                        forwardingScore: 999,
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: "120363200367779016@newsletter",
-                            newsletterName: "Silva MD Media Hub 📥",
-                            serverMessageId: 146
-                        }
-                    }
-                } : {
-                    image: { url: item.url },
-                    caption: "📸 *Instagram Downloaded*",
-                    contextInfo: {
-                        mentionedJid: [sender],
-                        forwardingScore: 999,
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: "120363200367779016@newsletter",
-                            newsletterName: "Silva MD Media Hub 📥",
-                            serverMessageId: 146
-                        }
-                    }
-                }, { quoted: message });
-            }
-
-        } catch (err) {
-            console.error("INSTAGRAM ERROR:", err);
-
-            await sock.sendMessage(jid, {
-                text: "❌ *Instagram Error*\nUnable to download this post.",
+        if (!igUrl || !igUrl.includes("instagram.com")) {
+            return await sock.sendMessage(jid, {
+                text: "❌ *Invalid Instagram link*\n\nExample:\n.ig https://www.instagram.com/reel/xxxxx",
                 contextInfo: {
-                    mentionedJid: [message.key.participant || message.key.remoteJid],
+                    mentionedJid: [sender],
                     forwardingScore: 999,
                     isForwarded: true,
                     forwardedNewsletterMessageInfo: {
                         newsletterJid: "120363200367779016@newsletter",
-                        newsletterName: "Silva MD Media Hub 📥",
-                        serverMessageId: 146
+                        newsletterName: "Silva MD IG Hub 📸",
+                        serverMessageId: 145
+                    }
+                }
+            }, { quoted: message });
+        }
+
+        try {
+            await sock.sendMessage(jid, {
+                text: "📥 *Fetching Instagram video…*",
+                contextInfo: {
+                    mentionedJid: [sender],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "Silva MD IG Hub 📸",
+                        serverMessageId: 145
+                    }
+                }
+            }, { quoted: message });
+
+            const api = `https://api.nekolabs.web.id/dwn/instagram?url=${encodeURIComponent(igUrl)}`;
+            const { data } = await axios.get(api);
+
+            if (!data.success || !data.result?.url?.length) {
+                throw new Error("No media found");
+            }
+
+            // Instagram API always returns videos here
+            const videoUrl = data.result.url[0];
+
+            await sock.sendMessage(jid, {
+                video: { url: videoUrl },
+                caption: "🎥 *Instagram Video*\n\nPowered by Silva MD",
+                contextInfo: {
+                    mentionedJid: [sender],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "Silva MD IG Hub 📸",
+                        serverMessageId: 145
+                    }
+                }
+            }, { quoted: message });
+
+        } catch (err) {
+            await sock.sendMessage(jid, {
+                text: `❌ *Instagram Download Error:*\n${err.message}`,
+                contextInfo: {
+                    mentionedJid: [sender],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "Silva MD Errors ⚠️",
+                        serverMessageId: 145
                     }
                 }
             }, { quoted: message });
