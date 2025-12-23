@@ -44,7 +44,7 @@ const handler = {
 
       // 🌐 Fallback APIs
       const apis = [
-        `https://apis.davidcyriltech.my.id/youtube/mp3?url=${link}`,
+        `https://api-rebix.zone.id/api/yta?url=${link}`,
         `https://api.ryzendesu.vip/api/downloader/ytmp3?url=${link}`
       ]
 
