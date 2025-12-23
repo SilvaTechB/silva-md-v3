@@ -1,149 +1,86 @@
-const axios = require('axios')
-const ytSearch = require('yt-search')
+const axios = require("axios");
 
 const handler = {
-  help: ['play', 'song', 'ytmusic', 'spotify'],
-  tags: ['media'],
-  command: /^(play|song|ytmusic|spotify)$/i,
-  group: false,
-  admin: false,
-  botAdmin: false,
-  owner: false,
+    help: ["play <song name>"],
+    tags: ["song", "music"],
+    command: /^play$/i,
+    group: false,
+    admin: false,
+    botAdmin: false,
+    owner: false,
 
-  execute: async ({ jid, sock, message, text }) => {
-    try {
-      const sender = message.key.participant || message.key.remoteJid
-
-      if (!text) {
-        return sock.sendMessage(
-          jid,
-          { text: '❌ *What should I play?*\n\nExample:\n.play faded alan walker' },
-          { quoted: message }
-        )
-      }
-
-      await sock.sendMessage(
-        jid,
-        { text: '🎧 *Silva MD is searching your track…*\n🔎 Please wait a moment.' },
-        { quoted: message }
-      )
-
-      // 🔍 YouTube search
-      const search = await ytSearch(text)
-      const video = search.videos?.[0]
-
-      if (!video) {
-        return sock.sendMessage(
-          jid,
-          { text: '❌ No matching songs found.' },
-          { quoted: message }
-        )
-      }
-
-      const link = video.url
-
-      // 🌐 Fallback APIs
-      const apis = [
-        `https://api-rebix.zone.id/api/yta?url=${link}`,
-        `https://api-rebix.zone.id/api/ytdl?format=mp3&url=${link}`
-      ]
-
-      let audioUrl, title, artist, thumbnail
-
-      for (const api of apis) {
+    execute: async ({ jid, sock, message, args }) => {
         try {
-          const { data } = await axios.get(api)
-          if (data?.status === 200 || data?.success) {
-            audioUrl = data.result?.downloadUrl || data.url
-            title = data.result?.title || video.title
-            artist = data.result?.author || video.author.name
-            thumbnail = data.result?.image || video.thumbnail
-            break
-          }
-        } catch {
-          continue
-        }
-      }
+            const sender = message.key.participant || message.key.remoteJid;
+            const query = args.join(" ");
 
-      if (!audioUrl) {
-        return sock.sendMessage(
-          jid,
-          { text: '⚠️ All servers failed to fetch this song. Try again later.' },
-          { quoted: message }
-        )
-      }
-
-      // 🎴 Preview card
-      await sock.sendMessage(
-        jid,
-        {
-          image: { url: thumbnail },
-          caption: `
-🎧 *NOW PLAYING*
-
-🎶 *Title:* ${title}
-🎤 *Artist:* ${artist}
-🌐 *Source:* YouTube
-
-✨ Powered by *Silva MD*
-          `.trim(),
-          contextInfo: {
-            mentionedJid: [sender],
-            forwardingScore: 999,
-            isForwarded: true,
-            forwardedNewsletterMessageInfo: {
-              newsletterJid: '120363200367779016@newsletter',
-              newsletterName: 'Silva MD Music Hub 🎶',
-              serverMessageId: 145
+            if (!query) {
+                return await sock.sendMessage(jid, {
+                    text: "❌ Provide a song name.\nExample:\n.play Hello",
+                    contextInfo: {
+                        mentionedJid: [sender]
+                    }
+                }, { quoted: message });
             }
-          }
-        },
-        { quoted: message }
-      )
 
-      // 🎵 Audio stream
-      await sock.sendMessage(
-        jid,
-        {
-          audio: { url: audioUrl },
-          mimetype: 'audio/mp4',
-          ptt: false,
-          contextInfo: {
-            mentionedJid: [sender]
-          }
-        },
-        { quoted: message }
-      )
+            const api = `https://api.nekolabs.web.id/dwn/youtube/play/v1?q=${encodeURIComponent(query)}`;
+            const { data } = await axios.get(api);
 
-      // 📁 MP3 file
-      await sock.sendMessage(
-        jid,
-        {
-          document: { url: audioUrl },
-          mimetype: 'audio/mp3',
-          fileName: `${title.replace(/[^a-zA-Z0-9 ]/g, '')}.mp3`,
-          contextInfo: {
-            mentionedJid: [sender]
-          }
-        },
-        { quoted: message }
-      )
+            if (!data || !data.success) {
+                return await sock.sendMessage(jid, {
+                    text: "❌ Music not found.",
+                    contextInfo: {
+                        mentionedJid: [sender]
+                    }
+                }, { quoted: message });
+            }
 
-      await sock.sendMessage(
-        jid,
-        { text: '✅ *Song delivered successfully!* Enjoy the vibes 🎶' },
-        { quoted: message }
-      )
+            const meta = data.result.metadata;
+            const audioUrl = data.result.downloadUrl;
 
-    } catch (err) {
-      console.error('Music Error:', err)
-      await sock.sendMessage(
-        jid,
-        { text: `🚫 *Music error*\n\n${err.message}` },
-        { quoted: message }
-      )
+            // 🎵 Send audio
+            await sock.sendMessage(jid, {
+                audio: { url: audioUrl },
+                mimetype: "audio/mpeg"
+            }, { quoted: message });
+
+            // 📰 Send newsletter-style info message
+            await sock.sendMessage(jid, {
+                text:
+                    `🎶 *Now Playing*\n\n` +
+                    `• *Title:* ${meta.title}\n` +
+                    `• *Channel:* ${meta.channel}\n` +
+                    `• *Duration:* ${meta.duration}`,
+                contextInfo: {
+                    mentionedJid: [sender],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "Silva MD Music Hub 🎶",
+                        serverMessageId: 145
+                    }
+                }
+            }, { quoted: message });
+
+        } catch (err) {
+            console.error("PLAY ERROR:", err);
+
+            await sock.sendMessage(jid, {
+                text: "❌ *Music Error*\nFailed to fetch or play the song.",
+                contextInfo: {
+                    mentionedJid: [message.key.participant || message.key.remoteJid],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363200367779016@newsletter",
+                        newsletterName: "Silva MD Music Hub 🎶",
+                        serverMessageId: 145
+                    }
+                }
+            }, { quoted: message });
+        }
     }
-  }
-}
+};
 
-module.exports = { handler }
+module.exports = { handler };
