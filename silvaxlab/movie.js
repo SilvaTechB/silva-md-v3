@@ -1,90 +1,156 @@
 const axios = require("axios");
 
-const movieCache = new Map(); // stores search results per chat
+const MOVIE_SEARCH_API = "https://movieapi.giftedtech.co.ke/api/search";
+const MOVIE_SOURCES_API = "https://movieapi.giftedtech.co.ke/api/sources";
 
-const handler = {
-    help: ["movie"],
-    tags: ["movie", "mdownload"],
-    command: /^movie$/i,
+// In-memory selection store (per chat)
+const movieCache = new Map();
 
-    execute: async ({ sock, jid, message, args }) => {
-        const sender = message.key.participant || message.key.remoteJid;
-        const query = args.join(" ");
+module.exports = {
+    pattern: "movie",
+    alias: ["movies", "film"],
+    desc: "Search and download movies",
+    category: "download",
 
-        // STEP 2: user replies with a number
-        if (!query && message.message?.extendedTextMessage?.text) {
-            const choice = parseInt(message.message.extendedTextMessage.text.trim());
+    async execute(sock, message, args) {
+        const jid = message.key.remoteJid;
+        const sender = message.key.participant || jid;
+
+        const ctx = {
+            contextInfo: {
+                mentionedJid: [sender],
+                forwardingScore: 999,
+                isForwarded: true,
+                forwardedNewsletterMessageInfo: {
+                    newsletterJid: "120363200367779016@newsletter",
+                    newsletterName: "Silva MD Movies 🎬",
+                    serverMessageId: 145
+                }
+            }
+        };
+
+        // ===============================
+        // 1️⃣ NUMBER SELECTION HANDLER
+        // ===============================
+        if (/^\d+$/.test(args[0])) {
+            const index = Number(args[0]) - 1;
             const cached = movieCache.get(jid);
 
-            if (!cached || isNaN(choice) || !cached[choice - 1]) return;
+            if (!cached || !cached[index]) {
+                return sock.sendMessage(
+                    jid,
+                    { text: "❌ Invalid selection. Please search again.", ...ctx },
+                    { quoted: message }
+                );
+            }
 
-            const selected = cached[choice - 1];
+            const movie = cached[index];
 
-            await sock.sendMessage(jid, {
-                text: `🎬 *Fetching movie…*\n\n*${selected.title}*`,
-                contextInfo: ctx(sender)
-            }, { quoted: message });
-
-            const src = await axios.get(
-                `https://movieapi.giftedtech.co.ke/api/sources/${selected.subjectId}`
+            await sock.sendMessage(
+                jid,
+                { text: `🎬 *Downloading:* ${movie.title}\n⏳ Please wait...`, ...ctx },
+                { quoted: message }
             );
 
-            const best =
-                src.data.results.find(v => v.quality === "720p") ||
-                src.data.results.find(v => v.quality === "480p") ||
-                src.data.results[0];
+            try {
+                // Fetch download sources
+                const srcRes = await axios.get(
+                    `${MOVIE_SOURCES_API}/${movie.subjectId}`
+                );
 
-            return await sock.sendMessage(jid, {
-                document: { url: best.download_url },
-                fileName: `${selected.title} (${best.quality}).mp4`,
-                mimetype: "video/mp4",
-                contextInfo: ctx(sender)
-            }, { quoted: message });
+                const sources = srcRes.data.results;
+                const best =
+                    sources.find(v => v.quality === "480p") ||
+                    sources.find(v => v.quality === "360p") ||
+                    sources[0];
+
+                if (!best) throw new Error("No download source found");
+
+                // Download MP4 as binary
+                const videoRes = await axios.get(best.download_url, {
+                    responseType: "arraybuffer",
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Referer": "https://movieapi.giftedtech.co.ke"
+                    },
+                    maxContentLength: Infinity,
+                    maxBodyLength: Infinity
+                });
+
+                await sock.sendMessage(
+                    jid,
+                    {
+                        document: Buffer.from(videoRes.data),
+                        mimetype: "video/mp4",
+                        fileName: `${movie.title} (${best.quality}).mp4`,
+                        ...ctx
+                    },
+                    { quoted: message }
+                );
+
+                movieCache.delete(jid);
+
+            } catch (err) {
+                console.error(err);
+                await sock.sendMessage(
+                    jid,
+                    { text: "❌ Failed to download movie.", ...ctx },
+                    { quoted: message }
+                );
+            }
+            return;
         }
 
-        // STEP 1: search movies
-        if (!query) {
-            return sock.sendMessage(jid, {
-                text: "🎥 *Movie search*\n\nExample:\n.movie Black Panther",
-                contextInfo: ctx(sender)
-            }, { quoted: message });
+        // ===============================
+        // 2️⃣ SEARCH HANDLER
+        // ===============================
+        if (!args.length) {
+            return sock.sendMessage(
+                jid,
+                { text: "📽️ Usage: `.movie Black Panther`", ...ctx },
+                { quoted: message }
+            );
         }
 
-        const res = await axios.get(
-            `https://movieapi.giftedtech.co.ke/api/search/${encodeURIComponent(query)}`
-        );
+        const query = args.join(" ");
 
-        const items = res.data.results.items.slice(0, 10);
-        movieCache.set(jid, items);
+        try {
+            const res = await axios.get(
+                `${MOVIE_SEARCH_API}/${encodeURIComponent(query)}`
+            );
 
-        let text = `🎬 *Movie Results*\nReply with a number\n\n`;
+            const items = res.data.results.items.slice(0, 10);
 
-        items.forEach((m, i) => {
-            text +=
-                `*${i + 1}.* ${m.title} (${m.releaseDate?.split("-")[0] || "N/A"})\n` +
-                `⭐ IMDb: ${m.imdbRatingValue || "N/A"}\n\n`;
-        });
+            if (!items.length) {
+                return sock.sendMessage(
+                    jid,
+                    { text: "❌ No movies found.", ...ctx },
+                    { quoted: message }
+                );
+            }
 
-        text += `📥 Sent as document\n⚡ Powered by Gifted Movies`;
+            movieCache.set(jid, items);
 
-        await sock.sendMessage(jid, {
-            text,
-            contextInfo: ctx(sender)
-        }, { quoted: message });
+            let list = `🎬 *Movie Results for:* ${query}\n\n`;
+            items.forEach((m, i) => {
+                list += `${i + 1}. *${m.title}* (${m.releaseDate || "N/A"})\n`;
+            });
+
+            list += `\n📥 Reply with the *number* to download`;
+
+            await sock.sendMessage(
+                jid,
+                { text: list, ...ctx },
+                { quoted: message }
+            );
+
+        } catch (err) {
+            console.error(err);
+            await sock.sendMessage(
+                jid,
+                { text: "❌ Error searching movies.", ...ctx },
+                { quoted: message }
+            );
+        }
     }
 };
-
-module.exports = { handler };
-
-function ctx(sender) {
-    return {
-        mentionedJid: [sender],
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-            newsletterJid: "120363200367779016@newsletter",
-            newsletterName: "Silva MD Movies 🎬",
-            serverMessageId: 99
-        }
-    };
-}
