@@ -1,74 +1,90 @@
-const fg = require('api-dylux');
+const axios = require("axios");
+const fg = require("api-dylux");
 
-module.exports = {
-    name: 'facebook',
-    commands: ['facebook', 'fb', 'fbdl'],
-    category: 'downloader',
+const handler = {
+    help: ["fb", "fbdl", "facebook"],
+    tags: ["downloader", "media"],
+    command: /^(fb|fbdl|facebook)$/i,
+    group: false,
+    admin: false,
+    botAdmin: false,
+    owner: false,
 
-    handler: async ({ sock, m, sender, args }) => {
+    execute: async ({ jid, sock, message, args }) => {
+        const sender = message.key.participant || message.key.remoteJid;
+        const fbUrl = args[0];
+
+        if (!fbUrl || !/(facebook\.com|fb\.watch)/i.test(fbUrl)) {
+            return await sock.sendMessage(
+                jid,
+                {
+                    text:
+                        "❌ *Invalid Facebook link*\n\n" +
+                        "Example:\n" +
+                        ".fb https://www.facebook.com/share/v/xxxxx",
+                    contextInfo: ctx(sender, "Silva MD FB Hub 📘")
+                },
+                { quoted: message }
+            );
+        }
+
         try {
-            const url = args[0];
+            await sock.sendMessage(
+                jid,
+                {
+                    text: "📥 *Fetching Facebook media…*",
+                    contextInfo: ctx(sender, "Silva MD FB Hub 📘")
+                },
+                { quoted: message }
+            );
 
-            if (!url || !/(facebook\.com|fb\.watch)/i.test(url)) {
-                throw `📘 *Facebook Downloader*\n\n` +
-                      `📌 Example:\n` +
-                      `*.fb* https://www.facebook.com/watch/?v=xxxxx`;
-            }
-
-            const contextInfo = {
-                mentionedJid: [sender],
-                forwardingScore: 999,
-                isForwarded: true,
-                forwardedNewsletterMessageInfo: {
-                    newsletterJid: '120363200367779016@newsletter',
-                    newsletterName: 'Silva MD FB Hub 📘',
-                    serverMessageId: 201
-                }
-            };
-
-            await sock.sendMessage(sender, {
-                text: '📥 *Downloading Facebook video…*',
-                contextInfo
-            }, { quoted: m });
-
-            const result = await fg.fbdl(url);
+            const result = await fg.fbdl(fbUrl);
 
             if (!result?.videoUrl) {
-                throw '❌ Failed to fetch Facebook video.';
+                throw new Error("No downloadable media found");
             }
 
-            await sock.sendMessage(sender, {
-                video: { url: result.videoUrl },
-                mimetype: 'video/mp4',
-                caption:
-`🎬 *FACEBOOK VIDEO*
+            // Optional: pre-check URL availability
+            await axios.head(result.videoUrl, { timeout: 10000 });
 
-📌 Title: ${result.title || 'Facebook Reel'}
-⚡ Fast download
-🚀 Powered by *Silva MD*`,
-                contextInfo: {
-                    ...contextInfo,
-                    externalAdReply: {
-                        title: 'Facebook Video Downloader',
-                        body: 'Silva MD • Clean & Fast',
-                        thumbnailUrl: 'https://files.catbox.moe/5uli5p.jpeg',
-                        sourceUrl: url,
-                        mediaType: 1,
-                        renderLargerThumbnail: true
-                    }
-                }
-            }, { quoted: m });
+            await sock.sendMessage(
+                jid,
+                {
+                    video: { url: result.videoUrl },
+                    caption:
+                        "🎥 *Facebook Video*\n\n" +
+                        "Powered by *Silva MD*",
+                    contextInfo: ctx(sender, "Silva MD FB Hub 📘")
+                },
+                { quoted: message }
+            );
 
         } catch (err) {
-            console.error('❌ FB DOWNLOAD ERROR:', err);
-
-            await sock.sendMessage(sender, {
-                text:
-`⚠️ *Facebook Download Failed*
-
-${String(err).replace(/^Error:\s*/i, '')}`,
-                contextInfo: { mentionedJid: [sender] }
-            }, { quoted: m });
+            await sock.sendMessage(
+                jid,
+                {
+                    text:
+                        "❌ *Facebook Download Error:*\n" +
+                        (err.message || err),
+                    contextInfo: ctx(sender, "Silva MD Errors ⚠️")
+                },
+                { quoted: message }
+            );
         }
     }
 };
+
+module.exports = { handler };
+
+function ctx(sender, name) {
+    return {
+        mentionedJid: [sender],
+        forwardingScore: 999,
+        isForwarded: true,
+        forwardedNewsletterMessageInfo: {
+            newsletterJid: "120363200367779016@newsletter",
+            newsletterName: name,
+            serverMessageId: Math.floor(Math.random() * 1000)
+        }
+    };
+}
