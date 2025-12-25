@@ -535,7 +535,7 @@ class PluginManager {
 }
 
 // ==============================
-// 🤖 MAIN BOT CLASS (WITH STATUS HANDLER INTEGRATION)
+// 🤖 MAIN BOT CLASS (FIXED & CLEAN)
 // ==============================
 class SilvaBot {
     constructor() {
@@ -544,400 +544,174 @@ class SilvaBot {
         this.groupCache = new NodeCache({ stdTTL: 300, useClones: false });
         this.pluginManager = new PluginManager();
         this.isConnected = false;
+
+        // ✅ SINGLE shared functions instance
         this.functions = new FunctionsWrapper();
-        
-        // Settings
-        this.antiDeleteEnabled = config.ANTIDELETE || true;
-        this.recentDeletedMessages = [];
-        this.maxDeletedMessages = 20;
-        
-        // Status settings from config
-        this.autoStatusView = config.AUTO_STATUS_SEEN || false;
-        this.autoStatusLike = config.AUTO_STATUS_REACT || false;
-        this.autoStatusReply = config.AUTO_STATUS_REPLY || false;
-        this.statusSaver = config.Status_Saver === 'true' || false;
-        this.statusReply = config.STATUS_REPLY === 'true' || false;
-        
+
+        // ==============================
+        // ⚙️ SETTINGS
+        // ==============================
+        this.antiDeleteEnabled = config.ANTIDELETE !== false;
+
+        // Status settings (ENV + config safe)
+        this.autoStatusView = config.AUTO_STATUS_SEEN === true;
+        this.autoStatusLike = config.AUTO_STATUS_REACT === true;
+        this.autoStatusReply = config.AUTO_STATUS_REPLY === true;
+        this.statusSaver = config.STATUS_SAVER === true;
+        this.statusReply = config.STATUS_REPLY === true;
+
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
         this.reconnectDelay = 5000;
         this.keepAliveInterval = null;
-        
+
         // Built-in commands
         this.commands = {
-            help: this.helpCommand.bind(this),
-            menu: this.menuCommand.bind(this),
-            ping: this.pingCommand.bind(this),
-            owner: this.ownerCommand.bind(this),
-            stats: this.statsCommand.bind(this),
-            plugins: this.pluginsCommand.bind(this),
-            start: this.startCommand.bind(this),
-            antidelete: this.antideleteCommand.bind(this),
-            statusview: this.statusviewCommand.bind(this),
-            statussaver: this.statussaverCommand.bind(this)
+            help: this.helpCommand?.bind(this),
+            menu: this.menuCommand?.bind(this),
+            ping: this.pingCommand?.bind(this),
+            owner: this.ownerCommand?.bind(this),
+            stats: this.statsCommand?.bind(this),
+            plugins: this.pluginsCommand?.bind(this),
+            start: this.startCommand?.bind(this),
+            antidelete: this.antideleteCommand?.bind(this)
         };
     }
 
+    // ==============================
+    // 🚀 INIT
+    // ==============================
     async init() {
         try {
-            botLogger.log('BOT', "🚀 Starting " + config.BOT_NAME + " v" + config.VERSION);
-            botLogger.log('INFO', "Mode: " + (config.BOT_MODE || 'public'));
-            botLogger.log('INFO', "Owner: " + (config.OWNER_NUMBER || 'Not configured'));
-            botLogger.log('INFO', "Prefix: " + config.PREFIX);
-            botLogger.log('INFO', "Status Saver: " + (this.statusSaver ? '✅ Enabled' : '❌ Disabled'));
-            
+            botLogger.log('BOT', `🚀 Starting ${config.BOT_NAME} v${config.VERSION}`);
+
             if (config.SESSION_ID) {
                 await loadSession();
             }
 
             await this.pluginManager.loadPlugins('silvaxlab');
             await this.connect();
-        } catch (error) {
-            botLogger.log('ERROR', "Init failed: " + error.message);
+        } catch (err) {
+            botLogger.log('ERROR', `Init failed: ${err.message}`);
             setTimeout(() => this.init(), 10000);
         }
     }
 
+    // ==============================
+    // 🔌 CONNECT
+    // ==============================
     async connect() {
-        try {
-            this.reconnectAttempts++;
-            
-            if (this.reconnectAttempts > this.maxReconnectAttempts) {
-                botLogger.log('ERROR', 'Max reconnection attempts reached');
-                this.reconnectAttempts = 0;
-                setTimeout(() => this.init(), 30000);
-                return;
-            }
+        const { state, saveCreds } = await useMultiFileAuthState('./sessions');
+        const { version } = await fetchLatestBaileysVersion();
 
-            const { state, saveCreds } = await useMultiFileAuthState('./sessions');
-            const { version } = await fetchLatestBaileysVersion();
-            
-            this.sock = makeWASocket({
-                version,
-                logger: logger,
-                auth: {
-                    creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, logger)
-                },
-                browser: Browsers.macOS(config.BOT_NAME),
-                markOnlineOnConnect: true,
-                generateHighQualityLinkPreview: true,
-                syncFullHistory: false,
-                defaultQueryTimeoutMs: 60000,
-                cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
-                retryRequestDelayMs: 3000,
-                connectTimeoutMs: 60000,
-                keepAliveIntervalMs: 25000,
-                emitOwnEvents: true,
-                fireInitQueries: true,
-                mobile: false,
-                shouldIgnoreJid: (jid) => {
-                    if (!jid || typeof jid !== 'string') {
-                        return false;
-                    }
-                    return jid === 'status@broadcast' || jid.includes('@newsletter');
-                },
-                getMessage: async (key) => {
-                    try {
-                        return await this.store.getMessage(key);
-                    } catch (error) {
-                        return null;
-                    }
-                },
-                printQRInTerminal: true
-            });
+        this.sock = makeWASocket({
+            version,
+            logger,
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, logger)
+            },
+            browser: Browsers.macOS(config.BOT_NAME),
+            markOnlineOnConnect: true,
+            printQRInTerminal: true,
+            shouldIgnoreJid: jid =>
+                jid === 'status@broadcast' || jid?.includes('@newsletter')
+        });
 
-            this.setupEvents(saveCreds);
-            botLogger.log('SUCCESS', '✅ Bot initialized');
-            this.reconnectAttempts = 0;
-        } catch (error) {
-            botLogger.log('ERROR', "Connection error: " + error.message);
-            await this.handleReconnect(error);
-        }
-    }
-
-    async handleReconnect(error) {
-        const delayTime = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
-        botLogger.log('WARNING', "Reconnecting in " + (delayTime/1000) + "s (Attempt " + this.reconnectAttempts + "/" + this.maxReconnectAttempts + ")");
-        
-        await this.functions.sleep(delayTime);
-        await this.connect();
+        this.setupEvents(saveCreds);
     }
 
     // ==============================
-    // 📱 STATUS HANDLER METHODS
+    // 📦 STATUS UNWRAP HELPER
     // ==============================
-
-    // Unwrap status message helper
     unwrapStatus(msg) {
         const inner =
             msg.message?.viewOnceMessageV2?.message ||
             msg.message?.viewOnceMessage?.message ||
-            msg.message || {};
-        const msgType = Object.keys(inner)[0] || '';
+            msg.message ||
+            {};
+        const msgType = Object.keys(inner)[0];
         return { inner, msgType };
     }
 
-    // Save status media helper
-    async saveStatusMedia(message, msgType, caption) {
-        try {
-            const stream = await downloadMediaMessage(
-                message,
-                'stream',
-                {},
-                {
-                    logger,
-                    reuploadRequest: this.sock.updateMediaMessage
-                }
-            );
-
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) {
-                buffer = Buffer.concat([buffer, chunk]);
-            }
-
-            const extMap = {
-                imageMessage: 'jpg',
-                videoMessage: 'mp4',
-                audioMessage: 'ogg',
-                documentMessage: 'pdf',
-                stickerMessage: 'webp'
-            };
-
-            const filename = `status_${Date.now()}.${extMap[msgType] || 'bin'}`;
-            const statusDir = path.join(__dirname, 'status_saver');
-            
-            if (!fs.existsSync(statusDir)) {
-                fs.mkdirSync(statusDir, { recursive: true });
-            }
-            
-            const filePath = path.join(statusDir, filename);
-            fs.writeFileSync(filePath, buffer);
-
-            // Send to bot owner
-            const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
-
-            await this.sock.sendMessage(botJid, {
-                [msgType.replace('Message', '')]: { url: filePath },
-                caption: caption,
-                mimetype: message.message?.[msgType]?.mimetype
-            });
-            
-            botLogger.log('SUCCESS', `✅ Status saved: ${filename}`);
-            return true;
-        } catch (error) {
-            botLogger.log('ERROR', `Media Save Error: ${error.message}`);
-            return false;
-        }
-    }
-
     // ==============================
-    // 🎯 SETUP EVENTS METHOD (UPDATED WITH STATUS HANDLING)
+    // 🎯 EVENTS
     // ==============================
-
     setupEvents(saveCreds) {
         const sock = this.sock;
 
-        sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
-            
-            if (qr) {
-                botLogger.log('INFO', '📱 QR Code Generated');
-                qrcode.generate(qr, { small: true });
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
+            if (connection === 'open') {
+                this.isConnected = true;
+                this.functions.setBotNumber(
+                    sock.user.id.split(':')[0]
+                );
+
+                botLogger.log('SUCCESS', '✅ WhatsApp Connected');
             }
 
             if (connection === 'close') {
-                this.isConnected = false;
-                this.stopKeepAlive();
-                
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const reason = lastDisconnect?.error?.message;
-                
-                botLogger.log('WARNING', "Connection closed. Status: " + statusCode + ", Reason: " + reason);
-                
-                if (statusCode === DisconnectReason.loggedOut) {
-                    botLogger.log('ERROR', 'Logged out. Please scan QR again.');
-                    this.cleanupSessions();
-                    setTimeout(() => this.init(), 10000);
-                } else {
-                    await this.handleReconnect(lastDisconnect?.error);
-                }
-            } else if (connection === 'open') {
-                this.isConnected = true;
-                this.reconnectAttempts = 0;
-                botLogger.log('SUCCESS', '🔗 Connected to WhatsApp');
-                
-                if (sock.user && sock.user.id) {
-                    const botNumber = sock.user.id.split(':')[0];
-                    this.functions.setBotNumber(botNumber);
-                    this.detectBotLid();
-                }
-                
-                this.startKeepAlive();
-                
-                // Send connection message to owner
-                if (config.OWNER_NUMBER) {
-                    try {
-                        await delay(2000);
-
-                        const ownerNumbers = Array.isArray(config.OWNER_NUMBER)
-                            ? config.OWNER_NUMBER
-                            : [config.OWNER_NUMBER];
-
-                        for (const ownerNum of ownerNumbers) {
-                            const ownerJid = this.functions.formatJid(ownerNum);
-                            if (!ownerJid) continue;
-
-                            const now = new Date().toLocaleString();
-
-                            const messageText = `
-✅ *${config.BOT_NAME} Connected!*
-Mode: ${config.BOT_MODE || 'public'}
-Time: ${now}
-Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
-Status View: ${this.autoStatusView ? '✅' : '❌'}
-Status React: ${this.autoStatusLike ? '✅' : '❌'}
-Status Saver: ${this.statusSaver ? '✅' : '❌'}
-Connected Number: ${this.functions.botNumber || 'Unknown'}
-                            `.trim();
-
-                            await this.sendMessage(ownerJid, {
-                                text: messageText,
-                                contextInfo: globalContextInfo
-                            });
-                        }
-                        botLogger.log('INFO', 'Sent connected message to owner(s)');
-                    } catch (error) {
-                        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
-                    }
-                }
+                botLogger.log(
+                    'WARNING',
+                    `Disconnected: ${lastDisconnect?.error?.message}`
+                );
+                setTimeout(() => this.connect(), 5000);
             }
         });
 
-        sock.ev.on('creds.update', saveCreds);
+        // ==============================
+        // 📩 MESSAGE + STATUS HANDLER
+        // ==============================
+        sock.ev.on('messages.upsert', async ({ messages }) => {
+            for (const message of messages) {
+                if (!message.message) continue;
 
-        // ✅ CONSOLIDATED messages.upsert handler with STATUS support
-        sock.ev.on('messages.upsert', async (m) => {
-            try {
-                const { messages, type } = m;
-                
-                if (!messages || messages.length === 0) return;
-                
-                // Filter out history sync messages
-                if (type && !['notify', 'append'].includes(type)) {
-                    return;
-                }
-                
-                for (const message of messages) {
-                    try {
-                        // ===== STATUS HANDLING =====
-                        if (message.key.remoteJid === 'status@broadcast') {
-                            try {
-                                const statusId = message.key.id;
-                                const userJid = message.key.participant;
-                                botLogger.log('STATUS', `📱 Status update from ${userJid}: ${statusId}`);
+                const jid = message.key.remoteJid;
 
-                                const { inner, msgType } = this.unwrapStatus(message);
+                // ===== STATUS HANDLING =====
+                if (jid === 'status@broadcast') {
+                    const userJid = message.key.participant;
+                    const statusId = message.key.id;
+                    const { inner, msgType } = this.unwrapStatus(message);
 
-                                // Auto-view status
-                                if (this.autoStatusView) {
-                                    try {
-                                        await sock.readMessages([message.key]);
-                                        botLogger.log('STATUS', `👁️ Status seen: ${statusId}`);
-                                    } catch (e) {
-                                        botLogger.log('WARNING', `Status seen failed: ${e.message}`);
-                                    }
+                    // 👁️ Auto view
+                    if (this.autoStatusView) {
+                        await sock.readMessages([message.key]);
+                    }
+
+                    // ❤️ Auto react
+                    if (this.autoStatusLike) {
+                        const emojis = config.STATUS_EMOJI || ['❤️', '🔥', '😍'];
+                        const emoji =
+                            emojis[Math.floor(Math.random() * emojis.length)];
+
+                        await sock.sendMessage(userJid, {
+                            react: {
+                                text: emoji,
+                                key: {
+                                    remoteJid: 'status@broadcast',
+                                    id: statusId,
+                                    participant: userJid
                                 }
-
-                                // Auto-react to status
-                                if (this.autoStatusLike) {
-                                    try {
-                                        const emojis = (config.CUSTOM_REACT_EMOJIS || '❤️,🔥,💯,😍,👏,✨,💖,🥰').split(',');
-                                        const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)].trim();
-                                        
-                                        await sock.sendMessage(userJid, {
-                                            react: {
-                                                text: randomEmoji,
-                                                key: {
-                                                    remoteJid: 'status@broadcast',
-                                                    id: statusId,
-                                                    participant: userJid
-                                                }
-                                            }
-                                        });
-                                        botLogger.log('STATUS', `❤️ Reacted on status ${statusId} with: ${randomEmoji}`);
-                                    } catch (e) {
-                                        botLogger.log('WARNING', `Status reaction failed: ${e.message}`);
-                                    }
-                                }
-
-                                // Auto-reply to status
-                                if (this.autoStatusReply) {
-                                    try {
-                                        const replyMsg = config.AUTO_STATUS_MSG || '👀 Viewed your status!';
-                                        await sock.sendMessage(userJid, {
-                                            text: replyMsg,
-                                            contextInfo: {
-                                                stanzaId: statusId,
-                                                participant: userJid,
-                                                quotedMessage: inner
-                                            }
-                                        });
-                                        botLogger.log('STATUS', `💬 Status replied: ${statusId}`);
-                                    } catch (e) {
-                                        botLogger.log('WARNING', `Status reply failed: ${e.message}`);
-                                    }
-                                }
-
-                                // Save status media
-                                if (this.statusSaver) {
-                                    try {
-                                        const userName = await this.getContactName(userJid) || 'Unknown';
-                                        let caption = `📥 *AUTO STATUS SAVER*\n\n*👤 From:* ${userName}\n*📅 Time:* ${new Date().toLocaleString()}`;
-
-                                        switch (msgType) {
-                                            case 'imageMessage':
-                                            case 'videoMessage':
-                                                if (inner[msgType]?.caption) {
-                                                    caption += `\n*💬 Caption:* ${inner[msgType].caption}`;
-                                                }
-                                                await this.saveStatusMedia({ message: inner }, msgType, caption);
-                                                botLogger.log('SUCCESS', `✅ Saved ${msgType} status from ${userName}`);
-                                                break;
-                                                
-                                            case 'audioMessage':
-                                                caption += `\n*🎵 Audio Status*`;
-                                                await this.saveStatusMedia({ message: inner }, msgType, caption);
-                                                botLogger.log('SUCCESS', `✅ Saved audio status from ${userName}`);
-                                                break;
-                                                
-                                            case 'extendedTextMessage':
-                                                caption = `📥 *AUTO STATUS SAVER*\n\n*👤 From:* ${userName}\n*💬 Text:* ${inner.extendedTextMessage?.text || ''}\n*📅 Time:* ${new Date().toLocaleString()}`;
-                                                const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-                                                await sock.sendMessage(botJid, { text: caption });
-                                                botLogger.log('SUCCESS', `✅ Saved text status from ${userName}`);
-                                                break;
-                                                
-                                            default:
-                                                botLogger.log('WARNING', `Unsupported status type: ${msgType}`);
-                                                break;
-                                        }
-
-                                        // Send status reply if enabled
-                                        if (this.statusReply) {
-                                            const replyMsg = config.STATUS_MSG || '👀 SILVA MD SUCCESSFULLY VIEWED YOUR STATUS';
-                                            await sock.sendMessage(userJid, { text: replyMsg });
-                                        }
-                                    } catch (e) {
-                                        botLogger.log('ERROR', `Status save failed: ${e.message}`);
-                                    }
-                                }
-                            } catch (e) {
-                                botLogger.log('ERROR', `Status handler error: ${e.message}`);
                             }
-                            
-                            continue; // Skip to next message
-                        }
+                        });
+                    }
+
+                    continue;
+                }
+
+                // ===== NORMAL CHAT HANDLING =====
+                await this.pluginManager.handleMessage({
+                    sock,
+                    message,
+                    jid
+                });
+            }
+        });
+    }
+}
 
                         // ===== REGULAR MESSAGE HANDLING =====
                         // Skip newsletters and broadcasts
@@ -1674,13 +1448,14 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 // ==============================
 const bot = new SilvaBot();
 
-// Export bot instance for index.js
+// ✅ EXPORT THE SAME SHARED INSTANCES
 module.exports = {
     bot,
     config,
     logger: botLogger,
-    functions: new FunctionsWrapper()
+    functions: bot.functions
 };
+
 
 // ==============================
 // 🛡️ ERROR HANDLERS
