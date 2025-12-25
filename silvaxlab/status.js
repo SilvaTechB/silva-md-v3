@@ -1,17 +1,18 @@
 /**
- * Silva MD Status Plugin
- * Auto View & Auto React to WhatsApp Status
+ * Silva MD – Auto Status View & React
+ * Compatible with handler-based plugin loader
  */
 
-module.exports = {
-    name: "status",
+const handler = {
+    help: [],
+    tags: ["system"],
+    command: /^$/i, // silent plugin (no command)
 
-    async onMessage({ sock, message, config }) {
+    execute: async ({ sock, message, config }) => {
         try {
-            // Status messages always come from this JID
+            // Status messages come from this JID
+            if (!message?.key) return;
             if (message.key.remoteJid !== "status@broadcast") return;
-
-            // Do not react to your own status
             if (message.key.fromMe) return;
 
             // ===============================
@@ -22,12 +23,13 @@ module.exports = {
             }
 
             // ===============================
-            // AUTO LIKE / REACT STATUS
+            // AUTO LIKE / REACT
             // ===============================
             if (config.AUTO_STATUS_REACT) {
-                const emojis = config.STATUS_EMOJI?.length
-                    ? config.STATUS_EMOJI
-                    : ["❤️"];
+                const emojis =
+                    config.STATUS_EMOJI?.length
+                        ? config.STATUS_EMOJI
+                        : ["❤️"];
 
                 const emoji =
                     emojis[Math.floor(Math.random() * emojis.length)];
@@ -49,3 +51,5 @@ module.exports = {
         }
     }
 };
+
+module.exports = { handler };
