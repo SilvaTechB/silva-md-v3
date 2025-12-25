@@ -38,7 +38,7 @@ const handler = {
             );
 
             const api =
-                "https://api.nekolabs.web.id/dwn/facebook?url=" +
+                "https://api-lite.silvatechinc.my.id/download/fbdown?url=" +
                 encodeURIComponent(fbUrl);
 
             const { data } = await axios.get(api, { timeout: 15000 });
