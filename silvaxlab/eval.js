@@ -1,55 +1,74 @@
+const util = require('util')
 const config = require('../config')
 
 const handler = {
     help: ['eval'],
-    tags: ['owner'],
+    tags: ['debug'],
     command: /^eval$/i,
-    group: false,
-    admin: false,
-    botAdmin: false,
-    owner: false,
+    owner: true,
 
-    execute: async ({ jid, sock, message }) => {
+    execute: async ({ jid, sock, message, args }) => {
         try {
-            const mek = message
-            const key = mek.key || {}
+            const from = message.key.remoteJid
+            const sender = message.key.participant || from
+            const query = args.join(' ').trim()
 
-            const output = {
-                remoteJid: key.remoteJid || null,
-                fromMe: key.fromMe || false,
-                id: key.id || null,
-
-                senderLid: key.senderLid || undefined,
-                senderPn: key.senderPn || undefined,
-
-                participant: key.participant || null,
-                participantPn: key.participantPn || null,
-                participantLid: key.participantLid || undefined
+            if (!query) {
+                return sock.sendMessage(
+                    jid,
+                    { text: '⚙️ Usage:\n.eval mek.key\n.eval sock\n.eval message' },
+                    { quoted: message }
+                )
             }
 
-            const textOutput =
-`{
-  remoteJid: '${output.remoteJid}',
-  fromMe: ${output.fromMe},
-  id: '${output.id}',
-  senderLid: ${output.senderLid},
-  senderPn: ${output.senderPn},
-  participant: '${output.participant}',
-  participantPn: '${output.participantPn}',
-  participantLid: ${output.participantLid}
-}`
+            // -------- SAFE CONTEXT MAP --------
+            const context = {
+                sock,
+                message,
+                mek: message
+            }
+
+            let result
+            try {
+                result = eval(query)
+            } catch (e) {
+                return sock.sendMessage(
+                    jid,
+                    { text: `❌ Eval error:\n${e.message}` },
+                    { quoted: message }
+                )
+            }
+
+            // -------- STRINGIFY (SAFE, REAL) --------
+            const inspected = util.inspect(result, {
+                depth: 2,
+                colors: false,
+                maxArrayLength: 20,
+                breakLength: 80
+            })
+
+            const output =
+`🧪  E V A L   R E S U L T S
+━━━━━━━━━━━━━━━━━━━━━━━
+Query:
+${query}
+
+Results:
+${inspected}
+━━━━━━━━━━━━━━━━━━━━━━━
+⚡ Silva MD Diagnostic Engine`
 
             await sock.sendMessage(
                 jid,
                 {
-                    text: textOutput,
+                    text: output,
                     contextInfo: {
-                        mentionedJid: [key.participant || jid],
-                        forwardingScore: 777,
+                        mentionedJid: [sender],
+                        forwardingScore: 999,
                         isForwarded: true,
                         forwardedNewsletterMessageInfo: {
                             newsletterJid: '120363200367779016@newsletter',
-                            newsletterName: 'SILVA • DEBUG',
+                            newsletterName: 'SILVA • EVAL LAB',
                             serverMessageId: Math.floor(Math.random() * 1000)
                         }
                     }
@@ -60,7 +79,7 @@ const handler = {
         } catch (err) {
             await sock.sendMessage(
                 jid,
-                { text: `❌ Eval error:\n${err.message}` },
+                { text: `❌ Internal eval failure:\n${err.message}` },
                 { quoted: message }
             )
         }
