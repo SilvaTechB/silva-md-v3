@@ -1,80 +1,92 @@
-const { igdl } = require('ruhend-scraper');
+const axios = require("axios");
+const { igdl } = require("ruhend-scraper");
 
-module.exports = {
-    name: 'instagram',
-    commands: ['instagram', 'ig', 'igdl', 'insta'],
-    category: 'downloader',
+const handler = {
+    help: ["ig", "igdl", "instagram"],
+    tags: ["downloader", "media"],
+    command: /^(ig|igdl|instagram)$/i,
+    group: false,
+    admin: false,
+    botAdmin: false,
+    owner: false,
 
-    handler: async ({ sock, m, sender, args }) => {
+    execute: async ({ jid, sock, message, args }) => {
+        const sender = message.key.participant || message.key.remoteJid;
+        const igUrl = args[0];
+
+        if (!igUrl || !igUrl.includes("instagram.com")) {
+            return await sock.sendMessage(
+                jid,
+                {
+                    text:
+                        "❌ *Invalid Instagram link*\n\n" +
+                        "Example:\n" +
+                        ".ig https://www.instagram.com/reel/xxxxx",
+                    contextInfo: ctx(sender, "Silva MD IG Hub 📸")
+                },
+                { quoted: message }
+            );
+        }
+
         try {
-            const url = args[0];
+            await sock.sendMessage(
+                jid,
+                {
+                    text: "📥 *Fetching Instagram media…*",
+                    contextInfo: ctx(sender, "Silva MD IG Hub 📸")
+                },
+                { quoted: message }
+            );
 
-            if (!url || !/instagram\.com/i.test(url)) {
-                throw `📸 *Instagram Downloader*\n\n` +
-                      `📌 Example:\n` +
-                      `*.ig* https://www.instagram.com/reel/xxxxx`;
-            }
-
-            const contextInfo = {
-                mentionedJid: [sender],
-                forwardingScore: 999,
-                isForwarded: true,
-                forwardedNewsletterMessageInfo: {
-                    newsletterJid: '120363200367779016@newsletter',
-                    newsletterName: 'Silva MD IG Hub 📸',
-                    serverMessageId: 301
-                }
-            };
-
-            await sock.sendMessage(sender, {
-                text: '📥 *Fetching Instagram media…*',
-                contextInfo
-            }, { quoted: m });
-
-            const result = await igdl(url);
+            const result = await igdl(igUrl);
 
             if (!result?.data?.length) {
-                throw '❌ No downloadable media found.';
+                throw new Error("No downloadable media found");
             }
 
-            const medias = result.data.slice(0, 5);
+            const media = result.data[0];
 
-            for (const media of medias) {
-                if (!media.url) continue;
+            // Optional availability check
+            await axios.head(media.url, { timeout: 10000 });
 
-                await sock.sendMessage(sender, {
+            await sock.sendMessage(
+                jid,
+                {
                     video: { url: media.url },
-                    mimetype: 'video/mp4',
                     caption:
-`🎥 *INSTAGRAM VIDEO*
-
-⚡ High quality
-🛡 Clean source
-🚀 Powered by *Silva MD*`,
-                    contextInfo: {
-                        ...contextInfo,
-                        externalAdReply: {
-                            title: 'Instagram Video Downloader',
-                            body: 'Silva MD • Reliable Engine',
-                            thumbnailUrl: 'https://files.catbox.moe/5uli5p.jpeg',
-                            sourceUrl: url,
-                            mediaType: 1,
-                            renderLargerThumbnail: true
-                        }
-                    }
-                }, { quoted: m });
-            }
+                        "🎥 *Instagram Video*\n\n" +
+                        "Powered by *Silva MD*",
+                    contextInfo: ctx(sender, "Silva MD IG Hub 📸")
+                },
+                { quoted: message }
+            );
 
         } catch (err) {
-            console.error('❌ IG DOWNLOAD ERROR:', err);
-
-            await sock.sendMessage(sender, {
-                text:
-`⚠️ *Instagram Download Failed*
-
-${String(err).replace(/^Error:\s*/i, '')}`,
-                contextInfo: { mentionedJid: [sender] }
-            }, { quoted: m });
+            await sock.sendMessage(
+                jid,
+                {
+                    text:
+                        "❌ *Instagram Download Error:*\n" +
+                        (err.message || err),
+                    contextInfo: ctx(sender, "Silva MD Errors ⚠️")
+                },
+                { quoted: message }
+            );
         }
     }
 };
+
+module.exports = { handler };
+
+function ctx(sender, name) {
+    return {
+        mentionedJid: [sender],
+        forwardingScore: 999,
+        isForwarded: true,
+        forwardedNewsletterMessageInfo: {
+            newsletterJid: "120363200367779016@newsletter",
+            newsletterName: name,
+            serverMessageId: Math.floor(Math.random() * 1000)
+        }
+    };
+}
