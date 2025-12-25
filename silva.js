@@ -506,6 +506,7 @@ class SilvaBot {
         this.pluginManager = new PluginManager();
         this.isConnected = false;
         this.functions = new FunctionsWrapper();
+        this.sessionLockFile = path.join(__dirname, './sessions/.lock');
         
         this.antiDeleteEnabled = config.ANTIDELETE || true;
         this.recentDeletedMessages = [];
@@ -538,6 +539,16 @@ class SilvaBot {
 
     async init() {
         try {
+            // Check for session lock
+            if (this.checkSessionLock()) {
+                botLogger.log('ERROR', '🔒 Another instance is already running!');
+                botLogger.log('ERROR', '⚠️ If this is wrong, delete ./sessions/.lock file');
+                process.exit(1);
+            }
+            
+            // Create session lock
+            this.createSessionLock();
+            
             botLogger.log('BOT', "🚀 Starting " + config.BOT_NAME + " v" + config.VERSION);
             botLogger.log('INFO', "Mode: " + (config.BOT_MODE || 'public'));
             botLogger.log('INFO', "Prefix: " + config.PREFIX);
@@ -550,7 +561,55 @@ class SilvaBot {
             await this.connect();
         } catch (error) {
             botLogger.log('ERROR', "Init failed: " + error.message);
+            this.removeSessionLock();
             setTimeout(() => this.init(), 10000);
+        }
+    }
+
+    checkSessionLock() {
+        if (!fs.existsSync(this.sessionLockFile)) return false;
+        
+        try {
+            const lockData = JSON.parse(fs.readFileSync(this.sessionLockFile, 'utf8'));
+            const lockAge = Date.now() - lockData.timestamp;
+            
+            // If lock is older than 5 minutes, consider it stale
+            if (lockAge > 300000) {
+                botLogger.log('WARNING', '⚠️ Stale lock detected, removing...');
+                fs.unlinkSync(this.sessionLockFile);
+                return false;
+            }
+            
+            return true;
+        } catch (e) {
+            // Corrupted lock file, remove it
+            fs.unlinkSync(this.sessionLockFile);
+            return false;
+        }
+    }
+
+    createSessionLock() {
+        try {
+            const lockData = {
+                pid: process.pid,
+                timestamp: Date.now(),
+                platform: process.platform
+            };
+            fs.writeFileSync(this.sessionLockFile, JSON.stringify(lockData, null, 2));
+            botLogger.log('INFO', '🔒 Session locked');
+        } catch (e) {
+            botLogger.log('WARNING', 'Failed to create lock: ' + e.message);
+        }
+    }
+
+    removeSessionLock() {
+        try {
+            if (fs.existsSync(this.sessionLockFile)) {
+                fs.unlinkSync(this.sessionLockFile);
+                botLogger.log('INFO', '🔓 Session unlocked');
+            }
+        } catch (e) {
+            // Ignore errors
         }
     }
 
@@ -653,8 +712,19 @@ class SilvaBot {
                     this.cleanupSessions();
                     setTimeout(() => this.init(), 5000);
                 } else if (statusCode === 440) {
-                    botLogger.log('ERROR', 'Connection replaced');
-                    process.exit(0);
+                    botLogger.log('ERROR', '⚠️ Connection replaced - Another instance is running!');
+                    botLogger.log('ERROR', '🔍 Check: WhatsApp Web, other deployments, or duplicate processes');
+                    
+                    // Instead of exiting immediately, wait and try to reclaim
+                    if (this.reconnectAttempts < 3) {
+                        botLogger.log('WARNING', `⏳ Waiting 30s before attempting to reclaim connection...`);
+                        await this.functions.sleep(30000);
+                        this.cleanupSessions(); // Force new session
+                        setTimeout(() => this.init(), 5000);
+                    } else {
+                        botLogger.log('ERROR', '❌ Cannot reclaim connection. Exiting...');
+                        process.exit(0);
+                    }
                 } else {
                     await this.handleReconnect(lastDisconnect?.error);
                 }
@@ -1132,8 +1202,14 @@ class SilvaBot {
         try {
             const sessionsDir = './sessions';
             if (fs.existsSync(sessionsDir)) {
-                fs.rmSync(sessionsDir, { recursive: true, force: true });
-                fs.mkdirSync(sessionsDir, { recursive: true });
+                // Remove all files except .lock
+                const files = fs.readdirSync(sessionsDir);
+                for (const file of files) {
+                    if (file !== '.lock') {
+                        const filePath = path.join(sessionsDir, file);
+                        fs.unlinkSync(filePath);
+                    }
+                }
                 botLogger.log('INFO', 'Sessions cleaned');
             }
         } catch (error) {
@@ -1649,10 +1725,29 @@ process.on('unhandledRejection', (reason, promise) => {
     botLogger.log('ERROR', `Unhandled Rejection: ${reason}`);
 });
 
+// Cleanup on exit
+process.on('SIGINT', () => {
+    botLogger.log('WARNING', 'SIGINT received, cleaning up...');
+    bot.removeSessionLock();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    botLogger.log('WARNING', 'SIGTERM received, cleaning up...');
+    bot.removeSessionLock();
+    process.exit(0);
+});
+
+process.on('exit', (code) => {
+    botLogger.log('INFO', `Process exiting with code: ${code}`);
+    bot.removeSessionLock();
+});
+
 // ==============================
 // 🎬 START BOT
 // ==============================
 bot.init().catch(error => {
     botLogger.log('ERROR', 'Failed to start bot: ' + error.message);
+    bot.removeSessionLock();
     process.exit(1);
 });
