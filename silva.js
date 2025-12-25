@@ -148,9 +148,6 @@ class FunctionsWrapper {
     isOwner(sender) {
         botLogger.log('DEBUG', `[OWNER CHECK] Checking if sender is owner: ${sender}`);
         
-        // First: If message is from the bot itself (fromMe), it's automatically owner
-        // We'll handle this in the message handler by checking fromMe flag
-        
         // Extract phone number or LID from sender
         let phoneNumber = '';
         let isLid = false;
@@ -466,13 +463,10 @@ class PluginManager {
             const commandMatch = text.split(' ')[0];
             if (commandRegex.test(commandMatch)) {
                 try {
-                    // Check permissions - SPECIAL HANDLING FOR FROM_ME MESSAGES
+                    // Check permissions
                     if (handler.owner && !this.functions.isOwner(sender)) {
-                        // If message is from bot itself (fromMe), allow it
-                        if (!message.key.fromMe) {
-                            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
-                            return true;
-                        }
+                        await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                        return true;
                     }
                     
                     if (handler.group && !isGroup) {
@@ -552,6 +546,8 @@ class SilvaBot {
         // ⚙️ SETTINGS
         // ==============================
         this.antiDeleteEnabled = config.ANTIDELETE !== false;
+        this.recentDeletedMessages = [];
+        this.maxDeletedMessages = 50;
 
         // Status settings (ENV + config safe)
         this.autoStatusView = config.AUTO_STATUS_SEEN === true;
@@ -567,14 +563,16 @@ class SilvaBot {
 
         // Built-in commands
         this.commands = {
-            help: this.helpCommand?.bind(this),
-            menu: this.menuCommand?.bind(this),
-            ping: this.pingCommand?.bind(this),
-            owner: this.ownerCommand?.bind(this),
-            stats: this.statsCommand?.bind(this),
-            plugins: this.pluginsCommand?.bind(this),
-            start: this.startCommand?.bind(this),
-            antidelete: this.antideleteCommand?.bind(this)
+            help: this.helpCommand.bind(this),
+            menu: this.menuCommand.bind(this),
+            ping: this.pingCommand.bind(this),
+            owner: this.ownerCommand.bind(this),
+            stats: this.statsCommand.bind(this),
+            plugins: this.pluginsCommand.bind(this),
+            start: this.startCommand.bind(this),
+            antidelete: this.antideleteCommand.bind(this),
+            statusview: this.statusviewCommand.bind(this),
+            statussaver: this.statussaverCommand.bind(this)
         };
     }
 
@@ -648,11 +646,21 @@ class SilvaBot {
                 this.functions.setBotNumber(
                     sock.user.id.split(':')[0]
                 );
+                
+                // Detect bot's own LID
+                if (sock.user && sock.user.id && sock.user.id.includes('@lid')) {
+                    this.functions.setBotLid(sock.user.id);
+                }
 
                 botLogger.log('SUCCESS', '✅ WhatsApp Connected');
+                
+                // Start keep-alive
+                this.startKeepAlive();
             }
 
             if (connection === 'close') {
+                this.isConnected = false;
+                this.stopKeepAlive();
                 botLogger.log(
                     'WARNING',
                     `Disconnected: ${lastDisconnect?.error?.message}`
@@ -662,157 +670,120 @@ class SilvaBot {
         });
 
         // ==============================
-        // 📩 MESSAGE + STATUS HANDLER
+        // 📩 MESSAGE + STATUS HANDLER (FIXED ASYNC VERSION)
         // ==============================
         sock.ev.on('messages.upsert', async ({ messages }) => {
             for (const message of messages) {
-                if (!message.message) continue;
+                try {
+                    if (!message.message) continue;
 
-                const jid = message.key.remoteJid;
+                    const jid = message.key.remoteJid;
+                    const sender = message.key.participant || jid;
+                    const isGroup = jid.endsWith('@g.us');
+                    const isFromMe = message.key.fromMe;
 
-                // ===== STATUS HANDLING =====
-                if (jid === 'status@broadcast') {
-                    const userJid = message.key.participant;
-                    const statusId = message.key.id;
-                    const { inner, msgType } = this.unwrapStatus(message);
+                    // ===== STATUS HANDLING =====
+                    if (jid === 'status@broadcast') {
+                        const statusId = message.key.id;
+                        const { inner, msgType } = this.unwrapStatus(message);
 
-                    // 👁️ Auto view
-                    if (this.autoStatusView) {
-                        await sock.readMessages([message.key]);
-                    }
+                        // Auto-view
+                        if (this.autoStatusView) await sock.readMessages([message.key]);
 
-                    // ❤️ Auto react
-                    if (this.autoStatusLike) {
-                        const emojis = config.STATUS_EMOJI || ['❤️', '🔥', '😍'];
-                        const emoji =
-                            emojis[Math.floor(Math.random() * emojis.length)];
-
-                        await sock.sendMessage(userJid, {
-                            react: {
-                                text: emoji,
-                                key: {
-                                    remoteJid: 'status@broadcast',
-                                    id: statusId,
-                                    participant: userJid
+                        // Auto-like
+                        if (this.autoStatusLike) {
+                            const emojis = config.STATUS_EMOJI || ['❤️', '🔥', '😍'];
+                            const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+                            await sock.sendMessage(sender, {
+                                react: {
+                                    text: emoji,
+                                    key: {
+                                        remoteJid: 'status@broadcast',
+                                        id: statusId,
+                                        participant: sender
+                                    }
                                 }
-                            }
-                        });
-                    }
-
-                    return;
-                }
-
-                // ===== NORMAL CHAT HANDLING =====
-                await this.pluginManager.handleMessage({
-                    sock,
-                    message,
-                    jid
-                });
-            }
-        });
-    }
-}
-
-                        // ===== REGULAR MESSAGE HANDLING =====
-                        // Skip newsletters and broadcasts
-                        if (message.key.remoteJid.includes('@newsletter') ||
-                            message.key.remoteJid.includes('@broadcast')) {
-                            return;
-                        }
-
-                        // Store message for anti-delete
-                        await this.store.setMessage(message.key, message);
-
-                        const jid = message.key.remoteJid;
-                        const sender = message.key.participant || jid;
-                        const isGroup = jid.endsWith('@g.us');
-                        const isFromMe = message.key.fromMe;
-                        
-                        botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`);
-                        
-                        // Detect bot LID from outgoing messages
-                        if (isFromMe && sender.includes('@lid') && !this.functions.botLid) {
-                            const lid = sender.split('@')[0];
-                            this.functions.setBotLid(lid + '@lid');
-                        }
-
-                        // Extract text
-                        let text = '';
-                        if (message.message?.conversation) {
-                            text = message.message.conversation;
-                        } else if (message.message?.extendedTextMessage?.text) {
-                            text = message.message.extendedTextMessage.text;
-                        } else if (message.message?.imageMessage?.caption) {
-                            text = message.message.imageMessage.caption;
-                        } else if (message.message?.videoMessage?.caption) {
-                            text = message.message.videoMessage.caption;
-                        } else if (message.message?.documentMessage?.caption) {
-                            text = message.message.documentMessage.caption;
-                        } else if (message.message?.audioMessage?.caption) {
-                            text = message.message.audioMessage?.caption || '';
-                        }
-                        
-                        if (text) {
-                            botLogger.log('MESSAGE', `📝 Text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
-                        }
-
-                        // Command handling
-                        if (text && text.startsWith(config.PREFIX)) {
-                            botLogger.log('COMMAND', `⚡ Command: ${text} from ${sender}`);
-                            
-                            const isOwner = isFromMe ? true : this.functions.isOwner(sender);
-                            botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
-                            
-                            const cmdText = text.slice(config.PREFIX.length).trim();
-                            
-                            await sock.sendPresenceUpdate('composing', jid);
-                            
-                            const executed = await this.pluginManager.executeCommand({
-                                text: cmdText,
-                                jid,
-                                sender,
-                                isGroup,
-                                args: cmdText.split(/ +/).slice(1),
-                                message,
-                                sock: sock,
-                                bot: this
                             });
-                            
-                            await sock.sendPresenceUpdate('paused', jid);
-                            
-                            if (!executed) {
-                                const args = cmdText.split(/ +/);
-                                const command = args.shift().toLowerCase();
-                                
-                                if (this.commands[command]) {
-                                    botLogger.log('COMMAND', `🛠️ Executing: ${command}`);
-                                    await this.commands[command]({
-                                        jid,
-                                        sender,
-                                        isGroup,
-                                        args,
-                                        message,
-                                        sock: sock,
-                                        bot: this
-                                    });
-                                } else if (config.AUTO_REPLY) {
-                                    await sock.sendMessage(jid, {
-                                        text: '❓ Unknown command. Type ' + config.PREFIX + 'help'
-                                    }, { quoted: message });
-                                }
-                            }
                         }
 
-                    } catch (error) {
-                        botLogger.log('ERROR', "Message handling error: " + error.message);
+                        // Auto-reply
+                        if (this.autoStatusReply && inner?.conversation) {
+                            await sock.sendMessage(sender, {
+                                text: config.STATUS_REPLY_TEXT || 'Nice status!',
+                                quoted: message
+                            });
+                        }
+
+                        continue; // Skip normal chat handling for status
                     }
+
+                    // ===== SKIP NEWSLETTERS & BROADCASTS =====
+                    if (jid.includes('@newsletter') || jid.includes('@broadcast')) continue;
+
+                    // ===== ANTI-DELETE STORAGE =====
+                    await this.store.setMessage(message.key, message);
+
+                    botLogger.log(
+                        'MESSAGE',
+                        `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`
+                    );
+
+                    // ===== COMMAND HANDLING =====
+                    let text = '';
+                    if (message.message?.conversation) text = message.message.conversation;
+                    else if (message.message?.extendedTextMessage?.text) text = message.message.extendedTextMessage.text;
+                    else if (message.message?.imageMessage?.caption) text = message.message.imageMessage.caption;
+                    else if (message.message?.videoMessage?.caption) text = message.message.videoMessage.caption;
+                    else if (message.message?.documentMessage?.caption) text = message.message.documentMessage.caption;
+                    else if (message.message?.audioMessage?.caption) text = message.message.audioMessage?.caption || '';
+
+                    if (!text) continue;
+
+                    // Check prefix
+                    if (!text.startsWith(config.PREFIX)) continue;
+
+                    const cmdText = text.slice(config.PREFIX.length).trim();
+                    const args = cmdText.split(/ +/);
+                    const command = args.shift().toLowerCase();
+                    const isOwner = isFromMe ? true : this.functions.isOwner(sender);
+
+                    botLogger.log('COMMAND', `⚡ Command: ${cmdText} from ${sender} (Owner: ${isOwner})`);
+
+                    await sock.sendPresenceUpdate('composing', jid);
+
+                    // First, try plugins
+                    const executed = await this.pluginManager.executeCommand({
+                        text: cmdText,
+                        jid,
+                        sender,
+                        isGroup,
+                        args,
+                        message,
+                        sock: sock,
+                        bot: this
+                    });
+
+                    // Then built-in commands if plugin didn't handle
+                    if (!executed && this.commands[command]) {
+                        botLogger.log('COMMAND', `🛠️ Executing built-in: ${command}`);
+                        await this.commands[command]({ jid, sender, isGroup, args, message, sock, bot: this });
+                    } else if (!executed && config.AUTO_REPLY) {
+                        await sock.sendMessage(jid, {
+                            text: '❓ Unknown command. Type ' + config.PREFIX + 'help'
+                        }, { quoted: message });
+                    }
+
+                    await sock.sendPresenceUpdate('paused', jid);
+
+                } catch (err) {
+                    botLogger.log('ERROR', 'Messages upsert error: ' + err.message);
                 }
-            } catch (error) {
-                botLogger.log('ERROR', "Messages upsert error: " + error.message);
             }
         });
 
-        // Message updates (for anti-delete)
+        // ==============================
+        // 🗑️ MESSAGE DELETE HANDLERS
+        // ==============================
         sock.ev.on('messages.update', async (updates) => {
             for (const update of updates) {
                 try {
@@ -833,13 +804,15 @@ class SilvaBot {
             }
         });
 
-        // Group participants updates
+        // ==============================
+        // 👥 GROUP PARTICIPANTS UPDATES
+        // ==============================
         sock.ev.on('group-participants.update', async (event) => {
             try {
                 if (sock.user && sock.user.id) {
                     const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
                     if (event.action === 'add' && event.participants.includes(botJid)) {
-                        await this.sendMessage(event.id, {
+                        await sock.sendMessage(event.id, {
                             text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
                         });
                         botLogger.log('INFO', 'Bot added to group: ' + event.id);
@@ -851,48 +824,10 @@ class SilvaBot {
         });
     }
 
-    // Utility method to save media
-    async saveMedia(message, filename) {
-        try {
-            if (getContentType(message.message)) {
-                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
-                    logger,
-                    reuploadRequest: this.sock.updateMediaMessage
-                });
-                
-                const tempDir = './temp';
-                if (!fs.existsSync(tempDir)) {
-                    fs.mkdirSync(tempDir, { recursive: true });
-                }
-                
-                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
-                fs.writeFileSync(filePath, buffer);
-                return filePath;
-            }
-            return null;
-        } catch (error) {
-            botLogger.log('ERROR', 'Failed to save media: ' + error.message);
-            return null;
-        }
-    }
-
-    // Detect bot's LID by checking messages sent by the bot
-    async detectBotLid() {
-        try {
-            // Send a test message to ourselves to detect LID
-            if (this.functions.botNumber) {
-                const botJid = this.functions.botNumber + '@s.whatsapp.net';
-                await delay(1000);
-                await this.sock.sendMessage(botJid, {
-                    text: '🤖 *Bot Activated!*\nType ' + config.PREFIX + 'help for commands'
-                });
-                botLogger.log('INFO', 'Test message sent to detect LID');
-            }
-        } catch (error) {
-            botLogger.log('ERROR', 'Failed to detect bot LID: ' + error.message);
-        }
-    }
-
+    // ==============================
+    // 🔁 ANTI-DELETE HANDLERS
+    // ==============================
+    
     // Handle single message delete
     async handleMessageDelete(update) {
         if (!this.antiDeleteEnabled || !update.key) return;
@@ -960,6 +895,10 @@ class SilvaBot {
         }
     }
 
+    // ==============================
+    // 🛠️ UTILITY METHODS
+    // ==============================
+    
     // Get contact name
     async getContactName(jid) {
         try {
@@ -967,6 +906,31 @@ class SilvaBot {
             return contact && contact[0] ? contact[0].name || contact[0].jid.split('@')[0] : jid.split('@')[0];
         } catch {
             return jid.split('@')[0];
+        }
+    }
+
+    // Utility method to save media
+    async saveMedia(message, filename) {
+        try {
+            if (getContentType(message.message)) {
+                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+                    logger,
+                    reuploadRequest: this.sock.updateMediaMessage
+                });
+                
+                const tempDir = './temp';
+                if (!fs.existsSync(tempDir)) {
+                    fs.mkdirSync(tempDir, { recursive: true });
+                }
+                
+                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
+                fs.writeFileSync(filePath, buffer);
+                return filePath;
+            }
+            return null;
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to save media: ' + error.message);
+            return null;
         }
     }
 
@@ -990,26 +954,12 @@ class SilvaBot {
         }
     }
 
-    cleanupSessions() {
-        try {
-            const sessionsDir = './sessions';
-            if (fs.existsSync(sessionsDir)) {
-                fs.rmSync(sessionsDir, { recursive: true, force: true });
-                fs.mkdirSync(sessionsDir, { recursive: true });
-                botLogger.log('INFO', 'Sessions cleaned');
-            }
-        } catch (error) {
-            // Silent fail
-        }
-    }
-
     // ==============================
-    // 💬 COMMAND HANDLERS (WITH STATUS COMMANDS)
+    // 💬 COMMAND HANDLERS
     // ==============================
     
     async statusviewCommand(context) {
         const { jid, sock, message, args, sender } = context;
-        // FIX: If message is fromMe, treat as owner
         const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
         
         if (!isOwner) {
@@ -1084,7 +1034,6 @@ class SilvaBot {
     
     async statussaverCommand(context) {
         const { jid, sock, message, args, sender } = context;
-        // FIX: If message is fromMe, treat as owner
         const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
         
         if (!isOwner) {
@@ -1173,7 +1122,6 @@ class SilvaBot {
 
     async antideleteCommand(context) {
         const { jid, sock, message, args, sender } = context;
-        // FIX: If message is fromMe, treat as owner
         const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
         
         if (!args[0]) {
@@ -1456,7 +1404,6 @@ module.exports = {
     functions: bot.functions
 };
 
-
 // ==============================
 // 🛡️ ERROR HANDLERS
 // ==============================
@@ -1468,3 +1415,10 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason, promise) => {
     botLogger.log('ERROR', `Unhandled Rejection at: ${promise}, reason: ${reason}`);
 });
+
+// ==============================
+// 🚀 START BOT IF RUN DIRECTLY
+// ==============================
+if (require.main === module) {
+    bot.init();
+}
