@@ -5,7 +5,7 @@ const handler = {
     help: ['linux', 'exec'],
     tags: ['tools', 'debug'],
     command: /^(linux|exec)$/i,
-    owner: false,
+    owner: true,
 
     execute: async ({ jid, sock, message, args }) => {
         const from = message.key.remoteJid
