@@ -11,8 +11,7 @@ const {
     makeCacheableSignalKeyStore,
     fetchLatestBaileysVersion,
     delay,
-    proto,
-    extractMessageContent
+    proto
 } = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
@@ -25,6 +24,9 @@ const pino = require('pino');
 
 // Import configuration
 const config = require('./config.js');
+
+// Import status handler
+const statusHandler = require('./lib/status.js');
 
 // Global Context Info
 const globalContextInfo = {
@@ -65,7 +67,6 @@ class BotLogger {
             DEBUG: '\x1b[90m',
             MESSAGE: '\x1b[34m',
             COMMAND: '\x1b[95m',
-            STATUS: '\x1b[93m',
             RESET: '\x1b[0m'
         };
         console.log(`${colors[type] || colors.INFO}[${type}] ${timestamp} - ${message}${colors.RESET}`);
@@ -121,7 +122,7 @@ async function loadSession() {
 }
 
 // ==============================
-// 🔧 UTILITY FUNCTIONS
+// 🔧 UTILITY FUNCTIONS (FIXED FOR LID OWNER DETECTION)
 // ==============================
 class FunctionsWrapper {
     constructor() {
@@ -130,7 +131,7 @@ class FunctionsWrapper {
             fs.mkdirSync(this.tempDir, { recursive: true });
         }
         this.botNumber = null;
-        this.botLid = null;
+        this.botLid = null; // Store bot's LID
     }
 
     async isAdmin(message, sock) {
@@ -147,69 +148,140 @@ class FunctionsWrapper {
     }
 
     isOwner(sender) {
-        if (!sender) return false;
+        botLogger.log('DEBUG', `[OWNER CHECK] Checking if sender is owner: ${sender}`);
         
-        // Extract phone number from sender
+        // First: If message is from the bot itself (fromMe), it's automatically owner
+        // We'll handle this in the message handler by checking fromMe flag
+        
+        // Extract phone number or LID from sender
         let phoneNumber = '';
+        let isLid = false;
         
         if (sender.includes('@lid')) {
+            // Handle LID format: 81712071631074@lid
             phoneNumber = sender.split('@')[0];
+            isLid = true;
+            botLogger.log('DEBUG', `[OWNER CHECK] Sender is LID: ${phoneNumber}`);
         } else if (sender.includes('@s.whatsapp.net')) {
+            // Handle standard JID format: 254700143167@s.whatsapp.net
             phoneNumber = sender.split('@')[0];
+            botLogger.log('DEBUG', `[OWNER CHECK] Sender is JID: ${phoneNumber}`);
         } else if (sender.includes(':')) {
+            // Handle other formats with colon
             phoneNumber = sender.split(':')[0];
         } else {
             phoneNumber = sender;
         }
         
+        // Clean the phone number (remove non-digits)
         const cleanSender = phoneNumber.replace(/[^0-9]/g, '');
+        botLogger.log('DEBUG', `[OWNER CHECK] Cleaned sender: ${cleanSender}`);
         
-        // Check if this is the bot itself
-        if (this.botNumber && cleanSender === this.botNumber.replace(/[^0-9]/g, '')) {
-            return true;
-        }
-        
-        // Check config owner numbers
-        let ownerNumbers = [];
-        if (config.OWNER_NUMBER) {
-            if (Array.isArray(config.OWNER_NUMBER)) {
-                ownerNumbers = config.OWNER_NUMBER.map(num => num.replace(/[^0-9]/g, ''));
-            } else if (typeof config.OWNER_NUMBER === 'string') {
-                ownerNumbers = [config.OWNER_NUMBER.replace(/[^0-9]/g, '')];
+        // Check 1: Is this the bot's LID?
+        if (isLid && this.botLid) {
+            const cleanBotLid = this.botLid.replace(/[^0-9]/g, '');
+            if (cleanSender === cleanBotLid) {
+                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot LID - GRANTING OWNER');
+                return true;
             }
         }
         
-        return ownerNumbers.some(ownerNum => 
-            cleanSender === ownerNum || 
-            cleanSender.endsWith(ownerNum) || 
-            ownerNum.endsWith(cleanSender)
-        );
+        // Check 2: Is this the bot's phone number?
+        if (this.botNumber) {
+            const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
+            botLogger.log('DEBUG', `[OWNER CHECK] Bot number: ${cleanBotNum}`);
+            if (cleanSender === cleanBotNum) {
+                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot number - GRANTING OWNER');
+                return true;
+            }
+        }
+        
+        // Check 3: Check against config owner numbers
+        let ownerNumbers = [];
+        if (config.OWNER_NUMBER) {
+            if (Array.isArray(config.OWNER_NUMBER)) {
+                ownerNumbers = config.OWNER_NUMBER.map(num => {
+                    const cleanNum = num.replace(/[^0-9]/g, '');
+                    botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${num} -> ${cleanNum}`);
+                    return cleanNum;
+                });
+            } else if (typeof config.OWNER_NUMBER === 'string') {
+                const cleanNum = config.OWNER_NUMBER.replace(/[^0-9]/g, '');
+                ownerNumbers = [cleanNum];
+                botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${config.OWNER_NUMBER} -> ${cleanNum}`);
+            }
+        }
+        
+        // Check 4: Also check connected number from config
+        if (config.CONNECTED_NUMBER) {
+            const connectedNumber = config.CONNECTED_NUMBER.replace(/[^0-9]/g, '');
+            ownerNumbers.push(connectedNumber);
+            botLogger.log('DEBUG', `[OWNER CHECK] Connected number from config: ${connectedNumber}`);
+        }
+        
+        // Remove duplicates
+        ownerNumbers = [...new Set(ownerNumbers)];
+        botLogger.log('DEBUG', `[OWNER CHECK] All owner numbers to check: ${ownerNumbers.join(', ')}`);
+        
+        // Check if sender matches any owner number
+        const isOwner = ownerNumbers.some(ownerNum => {
+            const match = cleanSender === ownerNum || 
+                         cleanSender.endsWith(ownerNum) || 
+                         ownerNum.endsWith(cleanSender);
+            if (match) {
+                botLogger.log('DEBUG', `[OWNER CHECK] Match found: ${cleanSender} === ${ownerNum}`);
+            }
+            return match;
+        });
+        
+        botLogger.log('DEBUG', `[OWNER CHECK] Final result for ${cleanSender}: ${isOwner}`);
+        return isOwner;
     }
 
     setBotNumber(number) {
         if (number) {
             this.botNumber = number.replace(/[^0-9]/g, '');
             botLogger.log('INFO', `🤖 Bot connected as: ${this.botNumber}`);
+            
+            // Also store as owner if not already in config
+            if (config.OWNER_NUMBER) {
+                const ownerNumbers = Array.isArray(config.OWNER_NUMBER) ? 
+                    config.OWNER_NUMBER : [config.OWNER_NUMBER];
+                const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
+                
+                // Check if bot number is already in owner list
+                const isAlreadyOwner = ownerNumbers.some(ownerNum => 
+                    ownerNum.replace(/[^0-9]/g, '') === cleanBotNum
+                );
+                
+                if (!isAlreadyOwner) {
+                    botLogger.log('INFO', `✅ Added bot number ${this.botNumber} to owner list`);
+                }
+            }
         }
     }
 
     setBotLid(lid) {
         if (lid) {
-            this.botLid = lid.split('@')[0];
+            this.botLid = lid.split('@')[0]; // Store just the number part
             botLogger.log('INFO', `🔑 Bot LID detected: ${this.botLid}`);
         }
     }
 
     isAllowed(sender, jid) {
+        // Owner is always allowed
         if (this.isOwner(sender)) {
+            botLogger.log('INFO', `✅ Owner access granted for: ${sender}`);
             return true;
         }
         
         if (config.BOT_MODE === 'public') return true;
         
         if (config.BOT_MODE === 'private') {
+            // Allow groups in private mode
             if (jid.endsWith('@g.us')) return true;
             
+            // Check allowed users
             if (config.ALLOWED_USERS && Array.isArray(config.ALLOWED_USERS)) {
                 const senderNumber = sender.split('@')[0].replace(/[^0-9]/g, '');
                 const allowedNumbers = config.ALLOWED_USERS.map(num => num.replace(/[^0-9]/g, ''));
@@ -241,25 +313,24 @@ class FunctionsWrapper {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    // Extract text from message
     extractText(message) {
-        try {
-            if (!message) return '';
-            
-            const content = extractMessageContent(message);
-            if (!content) return '';
-            
-            if (typeof content === 'string') return content;
-            if (content.conversation) return content.conversation;
-            if (content.text) return content.text;
-            if (content.extendedTextMessage?.text) return content.extendedTextMessage.text;
-            if (content.imageMessage?.caption) return content.imageMessage.caption;
-            if (content.videoMessage?.caption) return content.videoMessage.caption;
-            if (content.documentMessage?.caption) return content.documentMessage.caption;
-            
-            return '';
-        } catch (error) {
-            return '';
+        if (!message) return '';
+        
+        if (message.conversation) {
+            return message.conversation;
+        } else if (message.extendedTextMessage?.text) {
+            return message.extendedTextMessage.text;
+        } else if (message.imageMessage?.caption) {
+            return message.imageMessage.caption;
+        } else if (message.videoMessage?.caption) {
+            return message.videoMessage.caption;
+        } else if (message.documentMessage?.caption) {
+            return message.documentMessage.caption;
+        } else if (message.audioMessage?.caption) {
+            return message.audioMessage.caption;
         }
+        return '';
     }
 }
 
@@ -325,6 +396,7 @@ class PluginManager {
             if (!fs.existsSync(pluginDir)) {
                 fs.mkdirSync(pluginDir, { recursive: true });
                 botLogger.log('INFO', "Created plugin directory: " + dir);
+                this.createExamplePlugins(pluginDir);
                 return;
             }
 
@@ -367,16 +439,42 @@ class PluginManager {
         }
     }
 
+    createExamplePlugins(pluginDir) {
+        // Create example plugins if needed
+        const plugins = [];
+        for (const plugin of plugins) {
+            fs.writeFileSync(path.join(pluginDir, plugin.name), plugin.content);
+            botLogger.log('INFO', "Created plugin: " + plugin.name);
+        }
+    }
+
     async executeCommand(context) {
         const { text, jid, sender, isGroup, message, sock, args } = context;
+        
+        botLogger.log('COMMAND', `🔄 Processing command: ${text} from ${sender}`);
+        
+        // Check if user is allowed
+        if (!this.functions.isAllowed(sender, jid)) {
+            if (config.BOT_MODE === 'private') {
+                await sock.sendMessage(jid, { 
+                    text: '🔒 Private mode: Contact owner for access.' 
+                }, { quoted: message });
+                return true;
+            }
+            return false;
+        }
         
         for (const [commandRegex, handler] of this.commandHandlers.entries()) {
             const commandMatch = text.split(' ')[0];
             if (commandRegex.test(commandMatch)) {
                 try {
+                    // Check permissions - SPECIAL HANDLING FOR FROM_ME MESSAGES
                     if (handler.owner && !this.functions.isOwner(sender)) {
-                        await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
-                        return true;
+                        // If message is from bot itself (fromMe), allow it
+                        if (!message.key.fromMe) {
+                            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                            return true;
+                        }
                     }
                     
                     if (handler.group && !isGroup) {
@@ -406,6 +504,8 @@ class PluginManager {
                         }
                     }
                     
+                    // Execute command
+                    botLogger.log('COMMAND', `✅ Executing plugin command: ${commandMatch} for ${sender}`);
                     await handler.execute(context);
                     return true;
                     
@@ -437,7 +537,7 @@ class PluginManager {
 }
 
 // ==============================
-// 🤖 MAIN BOT CLASS (STABILIZED VERSION)
+// 🤖 MAIN BOT CLASS (FIXED FOR LID OWNER ISSUE)
 // ==============================
 class SilvaBot {
     constructor() {
@@ -449,21 +549,16 @@ class SilvaBot {
         this.functions = new FunctionsWrapper();
         
         // Settings
-        this.antiDeleteEnabled = config.ANTIDELETE || false;
+        this.antiDeleteEnabled = config.ANTIDELETE || true;
         this.recentDeletedMessages = [];
         this.maxDeletedMessages = 20;
-        
-        // Status settings
-        this.autoStatusView = config.AUTO_STATUS_SEEN || false;
-        this.autoStatusLike = config.AUTO_STATUS_REACT || false;
-        this.statusSaver = config.Status_Saver === 'true' || false;
-        this.statusReply = config.STATUS_REPLY === 'true' || false;
+        this.autoStatusView = config.AUTO_STATUS_VIEW || false;
+        this.autoStatusLike = config.AUTO_STATUS_LIKE || false;
         
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 10000; // Increased to 10 seconds
+        this.maxReconnectAttempts = 10;
+        this.reconnectDelay = 5000;
         this.keepAliveInterval = null;
-        this.isInitializing = false;
         
         // Built-in commands
         this.commands = {
@@ -475,21 +570,15 @@ class SilvaBot {
             plugins: this.pluginsCommand.bind(this),
             start: this.startCommand.bind(this),
             antidelete: this.antideleteCommand.bind(this),
-            statusview: this.statusviewCommand.bind(this),
-            statussaver: this.statussaverCommand.bind(this)
+            statusview: this.statusviewCommand.bind(this)
         };
     }
 
     async init() {
-        if (this.isInitializing) {
-            botLogger.log('WARNING', 'Already initializing, skipping...');
-            return;
-        }
-        
-        this.isInitializing = true;
         try {
             botLogger.log('BOT', "🚀 Starting " + config.BOT_NAME + " v" + config.VERSION);
             botLogger.log('INFO', "Mode: " + (config.BOT_MODE || 'public'));
+            botLogger.log('INFO', "Owner: " + (config.OWNER_NUMBER || 'Not configured'));
             botLogger.log('INFO', "Prefix: " + config.PREFIX);
             
             if (config.SESSION_ID) {
@@ -500,60 +589,62 @@ class SilvaBot {
             await this.connect();
         } catch (error) {
             botLogger.log('ERROR', "Init failed: " + error.message);
-            this.isInitializing = false;
-            setTimeout(() => this.init(), 30000);
+            setTimeout(() => this.init(), 10000);
         }
     }
 
     async connect() {
-        if (this.sock) {
-            try {
-                await this.sock.end(undefined);
-            } catch (e) {
-                // Ignore
-            }
-            this.sock = null;
-        }
-        
         try {
+            this.reconnectAttempts++;
+            
+            if (this.reconnectAttempts > this.maxReconnectAttempts) {
+                botLogger.log('ERROR', 'Max reconnection attempts reached');
+                this.reconnectAttempts = 0;
+                setTimeout(() => this.init(), 30000);
+                return;
+            }
+
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             const { version } = await fetchLatestBaileysVersion();
             
             this.sock = makeWASocket({
                 version,
-                logger: pino({ level: 'silent' }), // Reduced logging
+                logger: logger,
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
                 },
                 browser: Browsers.macOS(config.BOT_NAME),
-                markOnlineOnConnect: false, // Set to false to reduce conflicts
-                generateHighQualityLinkPreview: false,
+                markOnlineOnConnect: true,
+                generateHighQualityLinkPreview: true,
                 syncFullHistory: false,
-                defaultQueryTimeoutMs: 30000,
+                defaultQueryTimeoutMs: 60000,
                 cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
-                connectTimeoutMs: 30000,
-                keepAliveIntervalMs: 30000,
+                retryRequestDelayMs: 3000,
+                connectTimeoutMs: 60000,
+                keepAliveIntervalMs: 25000,
                 emitOwnEvents: true,
-                fireInitQueries: false, // Set to false
+                fireInitQueries: true,
                 mobile: false,
-                printQRInTerminal: false,
                 shouldIgnoreJid: (jid) => {
-                    if (!jid) return false;
-                    return jid.includes('@newsletter') || jid === 'status@broadcast';
+                    if (!jid || typeof jid !== 'string') {
+                        return false;
+                    }
+                    return jid === 'status@broadcast' || jid.includes('@newsletter');
                 },
                 getMessage: async (key) => {
                     try {
-                        const msg = await this.store.getMessage(key);
-                        return msg || { conversation: '' };
+                        return await this.store.getMessage(key);
                     } catch (error) {
-                        return { conversation: '' };
+                        return null;
                     }
-                }
+                },
+                printQRInTerminal: true
             });
 
             this.setupEvents(saveCreds);
             botLogger.log('SUCCESS', '✅ Bot initialized');
+            this.reconnectAttempts = 0;
         } catch (error) {
             botLogger.log('ERROR', "Connection error: " + error.message);
             await this.handleReconnect(error);
@@ -561,45 +652,13 @@ class SilvaBot {
     }
 
     async handleReconnect(error) {
-        this.reconnectAttempts++;
-        
-        if (this.reconnectAttempts > this.maxReconnectAttempts) {
-            botLogger.log('ERROR', 'Max reconnection attempts reached, waiting 60 seconds');
-            this.reconnectAttempts = 0;
-            setTimeout(() => this.init(), 60000);
-            return;
-        }
-
-        const delayTime = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 60000);
+        const delayTime = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
         botLogger.log('WARNING', "Reconnecting in " + (delayTime/1000) + "s (Attempt " + this.reconnectAttempts + "/" + this.maxReconnectAttempts + ")");
         
         await this.functions.sleep(delayTime);
         await this.connect();
     }
 
-    unwrapStatus(msg) {
-        try {
-            let content = msg.message;
-            
-            if (content?.viewOnceMessageV2?.message) {
-                content = content.viewOnceMessageV2.message;
-            } else if (content?.viewOnceMessage?.message) {
-                content = content.viewOnceMessage.message;
-            } else if (content?.ephemeralMessage?.message) {
-                content = content.ephemeralMessage.message;
-            }
-            
-            const msgType = Object.keys(content || {})[0] || '';
-            
-            return { inner: content, msgType };
-        } catch (error) {
-            return { inner: msg.message || {}, msgType: '' };
-        }
-    }
-
-    // ==============================
-    // 🎯 SETUP EVENTS (STABILIZED)
-    // ==============================
     setupEvents(saveCreds) {
         const sock = this.sock;
 
@@ -618,158 +677,292 @@ class SilvaBot {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const reason = lastDisconnect?.error?.message;
                 
-                botLogger.log('WARNING', `Connection closed. Status: ${statusCode}, Reason: ${reason}`);
+                botLogger.log('WARNING', "Connection closed. Status: " + statusCode + ", Reason: " + reason);
                 
-                // Handle specific disconnect reasons
                 if (statusCode === DisconnectReason.loggedOut) {
                     botLogger.log('ERROR', 'Logged out. Please scan QR again.');
                     this.cleanupSessions();
-                    setTimeout(() => this.init(), 30000);
-                } else if (statusCode === 440) {
-                    // Conflict error - wait longer before reconnecting
-                    botLogger.log('ERROR', 'Conflict detected! Make sure WhatsApp is not open on another device.');
-                    await this.functions.sleep(20000); // Wait 20 seconds
-                    await this.handleReconnect(lastDisconnect?.error);
+                    setTimeout(() => this.init(), 10000);
                 } else {
                     await this.handleReconnect(lastDisconnect?.error);
                 }
             } else if (connection === 'open') {
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
-                this.isInitializing = false;
                 botLogger.log('SUCCESS', '🔗 Connected to WhatsApp');
                 
+                // Set bot's connected number
                 if (sock.user && sock.user.id) {
                     const botNumber = sock.user.id.split(':')[0];
                     this.functions.setBotNumber(botNumber);
-                    botLogger.log('INFO', '🤖 Bot connected as: ' + botNumber);
+                    
+                    // Try to detect bot's LID by sending a test message to itself
+                    this.detectBotLid();
                 }
                 
-                // Don't send initial messages to avoid conflicts
-                await this.functions.sleep(5000);
-                
-                // Start keep alive with reduced frequency
                 this.startKeepAlive();
+                
+                // Send connection message to owner
+                if (config.OWNER_NUMBER) {
+                    try {
+                        await delay(2000);
+
+                        const ownerNumbers = Array.isArray(config.OWNER_NUMBER)
+                            ? config.OWNER_NUMBER
+                            : [config.OWNER_NUMBER];
+
+                        for (const ownerNum of ownerNumbers) {
+                            const ownerJid = this.functions.formatJid(ownerNum);
+                            if (!ownerJid) continue;
+
+                            const now = new Date().toLocaleString();
+
+                            const messageText = `
+✅ *${config.BOT_NAME} Connected!*
+Mode: ${config.BOT_MODE || 'public'}
+Time: ${now}
+Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
+Connected Number: ${this.functions.botNumber || 'Unknown'}
+                            `.trim();
+
+                            await this.sendMessage(ownerJid, {
+                                text: messageText,
+                                contextInfo: {
+                                    mentionedJid: [ownerJid],
+                                    forwardingScore: 999,
+                                    isForwarded: true,
+                                    forwardedNewsletterMessageInfo: {
+                                        newsletterJid: "120363200367779016@newsletter",
+                                        newsletterName: "SILVA WELCOMES YOU 💖🥰",
+                                        serverMessageId: 143
+                                    }
+                                }
+                            });
+                        }
+                        botLogger.log('INFO', 'Sent connected message to owner(s)');
+                    } catch (error) {
+                        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
+                    }
+                }
             }
         });
 
         sock.ev.on('creds.update', saveCreds);
 
-        // Simplified message handler
         sock.ev.on('messages.upsert', async (m) => {
             try {
                 const { messages, type } = m;
+                botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
                 
-                if (!messages || messages.length === 0 || type !== 'notify') return;
+                // First, handle status updates using the status handler
+                await statusHandler.handle({
+                    messages,
+                    type,
+                    sock,
+                    config,
+                    logMessage: (level, msg) => {
+                        console.log(`[${level}] ${msg}`);
+                    },
+                    unwrapStatus: this.unwrapStatus.bind(this),
+                    saveMedia: this.saveMedia.bind(this)
+                });
                 
-                for (const message of messages) {
-                    try {
-                        if (!message.message) continue;
-                        
-                        const jid = message.key.remoteJid;
-                        if (jid.includes('@newsletter') || jid === 'status@broadcast') continue;
-                        
-                        await this.handleRegularMessage(message);
-                    } catch (error) {
-                        // Silent error
-                    }
-                }
+                // Then handle regular messages
+                await this.handleMessages(m);
             } catch (error) {
-                // Silent error
+                botLogger.log('ERROR', "Messages upsert error: " + error.message);
             }
         });
 
-        // Anti-delete
+        // Handle message updates
         sock.ev.on('messages.update', async (updates) => {
-            if (!this.antiDeleteEnabled) return;
-            
             for (const update of updates) {
                 try {
-                    if (update.update?.message === null) {
+                    if (update.update && (update.update === 'delete' || update.update.messageStubType === 7)) {
                         await this.handleMessageDelete(update);
                     }
                 } catch (error) {
-                    // Silent error
+                    botLogger.log('ERROR', "Message update error: " + error.message);
+                }
+            }
+        });
+
+        // Handle message delete events
+        sock.ev.on('messages.delete', async (deletion) => {
+            try {
+                await this.handleBulkMessageDelete(deletion);
+            } catch (error) {
+                botLogger.log('ERROR', "Message delete error: " + error.message);
+            }
+        });
+
+        // Handle group participants updates
+        sock.ev.on('group-participants.update', async (event) => {
+            try {
+                if (this.sock.user && this.sock.user.id) {
+                    const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                    if (event.action === 'add' && event.participants.includes(botJid)) {
+                        await this.sendMessage(event.id, {
+                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
+                        });
+                        botLogger.log('INFO', 'Bot added to group: ' + event.id);
+                    }
+                }
+            } catch (error) {
+                // Silent fail
+            }
+        });
+
+        // Log outgoing messages
+        sock.ev.on('messages.upsert', async (m) => {
+            if (m.type === 'notify') {
+                for (const msg of m.messages || []) {
+                    if (msg.key.fromMe) {
+                        botLogger.log('MESSAGE', `📤 Sent message to: ${msg.key.remoteJid}`);
+                        // If this is a message sent by the bot to itself, we can detect the LID
+                        if (msg.key.remoteJid.includes('@lid') && !this.functions.botLid) {
+                            const lid = msg.key.remoteJid.split('@')[0];
+                            this.functions.setBotLid(lid + '@lid');
+                        }
+                    }
                 }
             }
         });
     }
 
-    async handleRegularMessage(message) {
+    // Utility method to unwrap status message
+    unwrapStatus(message) {
         try {
-            const jid = message.key.remoteJid;
-            const sender = message.key.participant || jid;
-            const isGroup = jid.endsWith('@g.us');
-            const isFromMe = message.key.fromMe;
-
-            // Store message
-            try {
-                await this.store.setMessage(message.key, message);
-            } catch (e) {
-                // Ignore
+            if (message.message?.protocolMessage?.type === 14) {
+                const statusMessage = message.message.protocolMessage;
+                return {
+                    key: message.key,
+                    message: statusMessage,
+                    isStatus: true
+                };
             }
-
-            // Extract text
-            const text = this.functions.extractText(message.message);
-            if (!text) return;
-
-            // Command handling
-            if (text.startsWith(config.PREFIX)) {
-                const cmdText = text.slice(config.PREFIX.length).trim();
-                const args = cmdText.split(/ +/);
-                const command = args.shift().toLowerCase();
-                
-                if (this.commands[command]) {
-                    await this.commands[command]({
-                        jid,
-                        sender,
-                        isGroup,
-                        args,
-                        message,
-                        sock: this.sock,
-                        bot: this
-                    });
-                } else {
-                    // Try plugins
-                    await this.pluginManager.executeCommand({
-                        text: cmdText,
-                        jid,
-                        sender,
-                        isGroup,
-                        args,
-                        message,
-                        sock: this.sock,
-                        bot: this
-                    });
-                }
-            }
+            return null;
         } catch (error) {
-            // Silent error
+            return null;
         }
     }
 
+    // Utility method to save media
+    async saveMedia(message, filename) {
+        try {
+            if (getContentType(message.message)) {
+                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+                    logger,
+                    reuploadRequest: this.sock.updateMediaMessage
+                });
+                
+                const tempDir = './temp';
+                if (!fs.existsSync(tempDir)) {
+                    fs.mkdirSync(tempDir, { recursive: true });
+                }
+                
+                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
+                fs.writeFileSync(filePath, buffer);
+                return filePath;
+            }
+            return null;
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to save media: ' + error.message);
+            return null;
+        }
+    }
+
+    // Detect bot's LID by checking messages sent by the bot
+    async detectBotLid() {
+        try {
+            // Send a test message to ourselves to detect LID
+            if (this.functions.botNumber) {
+                const botJid = this.functions.botNumber + '@s.whatsapp.net';
+                await delay(1000);
+                await this.sock.sendMessage(botJid, {
+                    text: '🤖 *Bot Activated!*\nType ' + config.PREFIX + 'help for commands'
+                });
+                botLogger.log('INFO', 'Test message sent to detect LID');
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to detect bot LID: ' + error.message);
+        }
+    }
+
+    // Handle single message delete
     async handleMessageDelete(update) {
         if (!this.antiDeleteEnabled || !update.key) return;
         
         try {
             const deletedMessage = await this.store.getMessage(update.key);
-            if (!deletedMessage || deletedMessage.key?.fromMe) return;
-            
-            const sender = deletedMessage.key.participant || deletedMessage.key.remoteJid;
-            const text = this.functions.extractText(deletedMessage.message) || '[Media]';
-            
-            this.recentDeletedMessages.unshift({
-                key: update.key,
-                sender: sender,
-                text: text,
-                deletedAt: Date.now()
-            });
-            
-            if (this.recentDeletedMessages.length > this.maxDeletedMessages) {
-                this.recentDeletedMessages.pop();
+            if (deletedMessage && !deletedMessage.key?.fromMe) {
+                await this.store.saveDeletedMessage(update.key, deletedMessage);
+                
+                const sender = deletedMessage.key.participant || deletedMessage.key.remoteJid;
+                const text = this.functions.extractText(deletedMessage.message);
+                
+                if (text || deletedMessage.message) {
+                    this.recentDeletedMessages.unshift({
+                        key: update.key,
+                        sender: sender,
+                        senderName: await this.getContactName(sender),
+                        text: text,
+                        message: deletedMessage.message,
+                        timestamp: deletedMessage.messageTimestamp,
+                        deletedAt: Date.now()
+                    });
+                    
+                    if (this.recentDeletedMessages.length > this.maxDeletedMessages) {
+                        this.recentDeletedMessages.pop();
+                    }
+                    
+                    const jid = update.key.remoteJid;
+                    if (jid.endsWith('@g.us')) {
+                        await this.sock.sendMessage(jid, {
+                            text: `🚨 *Message Deleted*\n\n` +
+                                  `👤 *Sender:* @${sender.split('@')[0]}\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
+                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`,
+                            mentions: [sender]
+                        });
+                    } else {
+                        await this.sock.sendMessage(jid, {
+                            text: `🚨 *You deleted a message*\n\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
+                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`
+                        });
+                    }
+                    
+                    botLogger.log('INFO', 'Anti-delete: Saved deleted message from ' + sender);
+                }
             }
         } catch (error) {
-            // Silent error
+            botLogger.log('ERROR', 'Anti-delete error: ' + error.message);
+        }
+    }
+
+    // Handle bulk message delete
+    async handleBulkMessageDelete(deletion) {
+        if (!this.antiDeleteEnabled) return;
+        
+        try {
+            if (deletion.keys && Array.isArray(deletion.keys)) {
+                for (const key of deletion.keys) {
+                    await this.handleMessageDelete({ key: key });
+                }
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Bulk delete error: ' + error.message);
+        }
+    }
+
+    // Get contact name
+    async getContactName(jid) {
+        try {
+            const contact = await this.sock.onWhatsApp(jid);
+            return contact && contact[0] ? contact[0].name || contact[0].jid.split('@')[0] : jid.split('@')[0];
+        } catch {
+            return jid.split('@')[0];
         }
     }
 
@@ -783,7 +976,7 @@ class SilvaBot {
                     // Silent fail
                 }
             }
-        }, 45000); // Increased to 45 seconds
+        }, 20000);
     }
 
     stopKeepAlive() {
@@ -802,53 +995,349 @@ class SilvaBot {
                 botLogger.log('INFO', 'Sessions cleaned');
             }
         } catch (error) {
-            botLogger.log('ERROR', 'Session cleanup error: ' + error.message);
+            // Silent fail
+        }
+    }
+
+    // FIXED: Handle owner messages correctly with LID support
+    async handleMessages(m) {
+        if (!m.messages || !Array.isArray(m.messages)) {
+            return;
+        }
+        
+        for (const message of m.messages) {
+            try {
+                // Skip status broadcasts and newsletter messages
+                if (message.key.remoteJid === 'status@broadcast' || 
+                    message.key.remoteJid.includes('@newsletter') ||
+                    message.key.remoteJid.includes('@broadcast')) {
+                    continue;
+                }
+
+                // Store message
+                await this.store.setMessage(message.key, message);
+
+                const jid = message.key.remoteJid;
+                const sender = message.key.participant || jid;
+                const isGroup = jid.endsWith('@g.us');
+                const isFromMe = message.key.fromMe;
+                
+                // Log ALL messages
+                botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`);
+                
+                // If message is fromMe and we don't have bot LID yet, store it
+                if (isFromMe && sender.includes('@lid') && !this.functions.botLid) {
+                    const lid = sender.split('@')[0];
+                    this.functions.setBotLid(lid + '@lid');
+                }
+
+                // Extract text from message
+                let text = '';
+                if (message.message?.conversation) {
+                    text = message.message.conversation;
+                } else if (message.message?.extendedTextMessage?.text) {
+                    text = message.message.extendedTextMessage.text;
+                } else if (message.message?.imageMessage?.caption) {
+                    text = message.message.imageMessage.caption;
+                } else if (message.message?.videoMessage?.caption) {
+                    text = message.message.videoMessage.caption;
+                } else if (message.message?.documentMessage?.caption) {
+                    text = message.message.documentMessage.caption;
+                } else if (message.message?.audioMessage) {
+                    text = message.message.audioMessage?.caption || '';
+                }
+                
+                if (text) {
+                    botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
+                }
+
+                // Check if message starts with prefix
+                if (text && text.startsWith(config.PREFIX)) {
+                    botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${sender}`);
+                    
+                    // SPECIAL FIX: If message is fromMe, automatically treat as owner
+                    const isOwner = isFromMe ? true : this.functions.isOwner(sender);
+                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
+                    
+                    const cmdText = text.slice(config.PREFIX.length).trim();
+                    
+                    // Send typing indicator
+                    await this.sock.sendPresenceUpdate('composing', jid);
+                    
+                    // Try plugin commands first
+                    const executed = await this.pluginManager.executeCommand({
+                        text: cmdText,
+                        jid,
+                        sender,
+                        isGroup,
+                        args: cmdText.split(/ +/).slice(1),
+                        message,
+                        sock: this.sock,
+                        bot: this
+                    });
+                    
+                    // Stop typing indicator
+                    await this.sock.sendPresenceUpdate('paused', jid);
+                    
+                    // If no plugin handled it, try built-in commands
+                    if (!executed) {
+                        const args = cmdText.split(/ +/);
+                        const command = args.shift().toLowerCase();
+                        
+                        if (this.commands[command]) {
+                            botLogger.log('COMMAND', `🛠️ Executing built-in command: ${command} for ${sender}`);
+                            await this.commands[command]({
+                                jid,
+                                sender,
+                                isGroup,
+                                args,
+                                message,
+                                sock: this.sock,
+                                bot: this
+                            });
+                        } else {
+                            // Auto reply for unknown commands
+                            if (config.AUTO_REPLY) {
+                                await this.sock.sendMessage(jid, {
+                                    text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
+                                }, { quoted: message });
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                botLogger.log('ERROR', "Message handling error: " + error.message);
+                botLogger.log('ERROR', "Stack: " + error.stack);
+            }
         }
     }
 
     // ==============================
-    // 💬 COMMAND HANDLERS
+    // 💬 COMMAND HANDLERS (FIXED FOR FROM_ME MESSAGES)
     // ==============================
     
+    async antideleteCommand(context) {
+        const { jid, sock, message, args, sender } = context;
+        // FIX: If message is fromMe, treat as owner
+        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
+        
+        if (!args[0]) {
+            const status = this.antiDeleteEnabled ? '✅ Enabled' : '❌ Disabled';
+            await sock.sendMessage(jid, {
+                text: '🚨 *Anti-Delete System*\n\n' +
+                      `Status: ${status}\n` +
+                      `Stored Messages: ${this.recentDeletedMessages.length}\n\n` +
+                      `• \`${config.PREFIX}antidelete on\` - Enable (Owner only)\n` +
+                      `• \`${config.PREFIX}antidelete off\` - Disable (Owner only)\n` +
+                      `• \`${config.PREFIX}antidelete list\` - Show recent\n` +
+                      `• \`${config.PREFIX}antidelete recover [num]\` - Recover message`
+            }, { quoted: message });
+            return;
+        }
+        
+        const action = args[0].toLowerCase();
+        
+        switch(action) {
+            case 'on':
+                if (!isOwner) {
+                    await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                    return;
+                }
+                this.antiDeleteEnabled = true;
+                await sock.sendMessage(jid, {
+                    text: '✅ Anti-delete enabled!'
+                }, { quoted: message });
+                break;
+                
+            case 'off':
+                if (!isOwner) {
+                    await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                    return;
+                }
+                this.antiDeleteEnabled = false;
+                await sock.sendMessage(jid, {
+                    text: '❌ Anti-delete disabled.'
+                }, { quoted: message });
+                break;
+                
+            case 'list':
+                if (this.recentDeletedMessages.length > 0) {
+                    let listText = '📋 *Recently Deleted Messages*\n\n';
+                    this.recentDeletedMessages.forEach((msg, index) => {
+                        const timeAgo = Math.floor((Date.now() - msg.deletedAt) / 1000);
+                        listText += `${index + 1}. ${msg.senderName} - ${timeAgo}s ago\n`;
+                        if (msg.text && msg.text.length > 50) {
+                            listText += `   ${msg.text.substring(0, 50)}...\n`;
+                        } else if (msg.text) {
+                            listText += `   ${msg.text}\n`;
+                        }
+                    });
+                    listText += '\nUse `' + config.PREFIX + 'antidelete recover [number]` to recover.';
+                    await sock.sendMessage(jid, { text: listText }, { quoted: message });
+                } else {
+                    await sock.sendMessage(jid, {
+                        text: 'No deleted messages stored.'
+                    }, { quoted: message });
+                }
+                break;
+                
+            case 'recover':
+                const index = parseInt(args[1]) - 1;
+                if (index >= 0 && index < this.recentDeletedMessages.length) {
+                    const deletedMsg = this.recentDeletedMessages[index];
+                    
+                    if (deletedMsg.message) {
+                        await sock.sendMessage(jid, {
+                            forward: deletedMsg.message,
+                            contextInfo: {
+                                mentionedJid: [deletedMsg.sender],
+                                forwardingScore: 999,
+                                isForwarded: true
+                            }
+                        });
+                        
+                        await sock.sendMessage(jid, {
+                            text: `🔁 *Message Recovered*\n\nFrom: ${deletedMsg.senderName}\nDeleted: ${Math.floor((Date.now() - deletedMsg.deletedAt) / 1000)}s ago`
+                        }, { quoted: message });
+                    } else if (deletedMsg.text) {
+                        await sock.sendMessage(jid, {
+                            text: `🔁 *Message Recovered*\n\nFrom: ${deletedMsg.senderName}\n\n${deletedMsg.text}`,
+                            mentions: [deletedMsg.sender]
+                        }, { quoted: message });
+                    }
+                    
+                    this.recentDeletedMessages.splice(index, 1);
+                } else {
+                    await sock.sendMessage(jid, {
+                        text: 'Invalid message number. Use `' + config.PREFIX + 'antidelete list` to see available messages.'
+                    }, { quoted: message });
+                }
+                break;
+                
+            default:
+                await sock.sendMessage(jid, {
+                    text: 'Invalid option. Use `' + config.PREFIX + 'antidelete` for help.'
+                }, { quoted: message });
+        }
+    }
+    
+    async statusviewCommand(context) {
+        const { jid, sock, message, args, sender } = context;
+        // FIX: If message is fromMe, treat as owner
+        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
+        
+        if (!isOwner) {
+            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+            return;
+        }
+        
+        const action = args[0]?.toLowerCase();
+        
+        if (!action) {
+            await sock.sendMessage(jid, {
+                text: `📊 *Status Auto Settings*\n\n` +
+                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\n` +
+                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\n\n` +
+                      `Commands:\n` +
+                      `• ${config.PREFIX}statusview on - Enable both\n` +
+                      `• ${config.PREFIX}statusview off - Disable both\n` +
+                      `• ${config.PREFIX}statusview view - Toggle auto-view\n` +
+                      `• ${config.PREFIX}statusview like - Toggle auto-like`
+            }, { quoted: message });
+            return;
+        }
+        
+        switch(action) {
+            case 'on':
+                this.autoStatusView = true;
+                this.autoStatusLike = true;
+                await sock.sendMessage(jid, {
+                    text: '✅ Auto-view and auto-like enabled for status updates.'
+                }, { quoted: message });
+                break;
+                
+            case 'off':
+                this.autoStatusView = false;
+                this.autoStatusLike = false;
+                await sock.sendMessage(jid, {
+                    text: '❌ Auto-view and auto-like disabled.'
+                }, { quoted: message });
+                break;
+                
+            case 'view':
+                this.autoStatusView = !this.autoStatusView;
+                await sock.sendMessage(jid, {
+                    text: `Auto-view: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}`
+                }, { quoted: message });
+                break;
+                
+            case 'like':
+                this.autoStatusLike = !this.autoStatusLike;
+                await sock.sendMessage(jid, {
+                    text: `Auto-like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}`
+                }, { quoted: message });
+                break;
+                
+            default:
+                await sock.sendMessage(jid, {
+                    text: 'Invalid option. Use `' + config.PREFIX + 'statusview` for help.'
+                }, { quoted: message });
+        }
+    }
+
     async helpCommand(context) {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
         
-        let helpText = `🤖 *${config.BOT_NAME} Help*\n\n`;
-        helpText += `Prefix: ${config.PREFIX}\n`;
-        helpText += `Mode: ${config.BOT_MODE || 'public'}\n\n`;
-        
-        helpText += `*Commands:*\n`;
-        helpText += `• ${config.PREFIX}help - This menu\n`;
-        helpText += `• ${config.PREFIX}menu - Main menu\n`;
-        helpText += `• ${config.PREFIX}ping - Bot status\n`;
-        helpText += `• ${config.PREFIX}owner - Owner info\n`;
-        helpText += `• ${config.PREFIX}stats - Statistics\n`;
+        let helpText = '*Silva MD Help Menu*\n\n';
+        helpText += 'Prefix: ' + config.PREFIX + '\n';
+        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\n\n';
+        helpText += '*Built-in Commands:*\n';
+        helpText += '• ' + config.PREFIX + 'help - This menu\n';
+        helpText += '• ' + config.PREFIX + 'menu - Main menu\n';
+        helpText += '• ' + config.PREFIX + 'ping - Check status\n';
+        helpText += '• ' + config.PREFIX + 'owner - Owner info\n';
+        helpText += '• ' + config.PREFIX + 'plugins - List plugins\n';
+        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\n';
+        helpText += '• ' + config.PREFIX + 'antidelete - Recover deleted messages\n';
+        helpText += '• ' + config.PREFIX + 'statusview - Auto status settings (Owner)\n';
         
         if (plugins.length > 0) {
-            helpText += `\n*Plugins:* ${plugins.length} loaded`;
+            helpText += '\n*Loaded Plugins:*\n';
+            for (const cmd of plugins) {
+                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\n';
+            }
         }
+        
+        helpText += '\n📍 *Silva Tech Nexus*';
         
         await sock.sendMessage(jid, { text: helpText }, { quoted: message });
     }
 
     async menuCommand(context) {
         const { jid, sock, message } = context;
-        const menuText = `
-*${config.BOT_NAME} Menu*
-
-⚡ *Status*
-• Uptime: ${(process.uptime() / 3600).toFixed(2)}h
-• Connection: ${this.isConnected ? '✅' : '❌'}
-• Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
-
-📋 *Commands*
-• ${config.PREFIX}ping - Check status
-• ${config.PREFIX}help - Show help
-• ${config.PREFIX}owner - Owner info
-• ${config.PREFIX}stats - Statistics
-• ${config.PREFIX}plugins - List plugins
-        `.trim();
+        const menuText = '┌─「 *Silva MD* 」─\n' +
+                        '│\n' +
+                        '│ ⚡ *BOT STATUS*\n' +
+                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\n' +
+                        '│ • Prefix: ' + config.PREFIX + '\n' +
+                        '│ • Version: ' + config.VERSION + '\n' +
+                        '│ • Anti-delete: ' + (this.antiDeleteEnabled ? '✅' : '❌') + '\n' +
+                        '│\n' +
+                        '│ 📋 *CORE COMMANDS*\n' +
+                        '│ • ' + config.PREFIX + 'ping - Check bot status\n' +
+                        '│ • ' + config.PREFIX + 'help - Show help\n' +
+                        '│ • ' + config.PREFIX + 'owner - Show owner info\n' +
+                        '│ • ' + config.PREFIX + 'menu - This menu\n' +
+                        '│ • ' + config.PREFIX + 'plugins - List plugins\n' +
+                        '│ • ' + config.PREFIX + 'stats - Bot statistics\n' +
+                        '│ • ' + config.PREFIX + 'antidelete - Recover deleted messages\n' +
+                        '│\n' +
+                        '│ 🎨 *MEDIA COMMANDS*\n' +
+                        '│ • ' + config.PREFIX + 'sticker - Create sticker\n' +
+                        '│\n' +
+                        '│ └─「 *SILVA TECH* 」';
         
         await sock.sendMessage(jid, { text: menuText }, { quoted: message });
     }
@@ -859,17 +1348,9 @@ class SilvaBot {
         await sock.sendMessage(jid, { text: '🏓 Pong!' }, { quoted: message });
         const latency = Date.now() - start;
         
-        const statusText = `
-📊 *Status Report*
-
-⚡ Latency: ${latency}ms
-⏱️ Uptime: ${(process.uptime() / 3600).toFixed(2)}h
-💾 RAM: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB
-🌐 Connection: ${this.isConnected ? 'Connected ✅' : 'Disconnected ❌'}
-🤖 Bot: ${this.functions.botNumber || 'Unknown'}
-        `.trim();
-        
-        await sock.sendMessage(jid, { text: statusText }, { quoted: message });
+        await sock.sendMessage(jid, {
+            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
+        }, { quoted: message });
     }
 
     async ownerCommand(context) {
@@ -877,7 +1358,11 @@ class SilvaBot {
         let ownerText = '👑 *Bot Owner*\n\n';
         
         if (this.functions.botNumber) {
-            ownerText += `🤖 Connected: ${this.functions.botNumber}\n`;
+            ownerText += `🤖 Connected Bot: ${this.functions.botNumber}\n`;
+        }
+        
+        if (this.functions.botLid) {
+            ownerText += `🔑 Bot LID: ${this.functions.botLid}\n`;
         }
         
         if (config.OWNER_NUMBER) {
@@ -890,26 +1375,27 @@ class SilvaBot {
             }
         }
         
-        await sock.sendMessage(jid, { text: ownerText }, { quoted: message });
+        ownerText += `⚡ ${config.BOT_NAME} v${config.VERSION}`;
+        
+        await sock.sendMessage(jid, {
+            text: ownerText
+        }, { quoted: message });
     }
 
     async statsCommand(context) {
         const { jid, sock, message } = context;
-        
-        const uptime = process.uptime();
-        const hours = Math.floor(uptime / 3600);
-        const minutes = Math.floor((uptime % 3600) / 60);
-        
-        const statsText = `
-📊 *Bot Statistics*
-
-⏱️ Uptime: ${hours}h ${minutes}m
-💾 Memory: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB
-📦 Platform: ${process.platform}
-🔌 Plugins: ${this.pluginManager.getCommandList().length}
-🚨 Deleted Messages: ${this.recentDeletedMessages.length}
-🌐 Status: ${this.isConnected ? 'Connected ✅' : 'Disconnected ❌'}
-        `.trim();
+        const statsText = '📊 *Bot Statistics*\n\n' +
+                         '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n' +
+                         '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n' +
+                         '📦 Platform: ' + process.platform + '\n' +
+                         '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\n' +
+                         '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\n' +
+                         '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
+                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\n' +
+                         '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n' +
+                         '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\n' +
+                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\n' +
+                         '🔑 Bot LID: ' + (this.functions.botLid || 'Not detected');
         
         await sock.sendMessage(jid, { text: statsText }, { quoted: message });
     }
@@ -917,15 +1403,14 @@ class SilvaBot {
     async pluginsCommand(context) {
         const { jid, sock, message } = context;
         const plugins = this.pluginManager.getCommandList();
-        
-        let pluginsText = `📦 *Plugins: ${plugins.length}*\n\n`;
+        let pluginsText = '📦 *Loaded Plugins*\n\nTotal: ' + plugins.length + '\n\n';
         
         if (plugins.length === 0) {
-            pluginsText += 'No plugins loaded.';
+            pluginsText += 'No plugins loaded.\nCheck silvaxlab folder.';
         } else {
-            plugins.forEach((plugin, idx) => {
-                pluginsText += `${idx + 1}. ${plugin.command}\n`;
-            });
+            for (const plugin of plugins) {
+                pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\n';
+            }
         }
         
         await sock.sendMessage(jid, { text: pluginsText }, { quoted: message });
@@ -933,108 +1418,32 @@ class SilvaBot {
 
     async startCommand(context) {
         const { jid, sock, message } = context;
+        const startText = '✨ *Welcome to Silva MD!*\n\n' +
+                         'I am an advanced WhatsApp bot with plugin support.\n\n' +
+                         'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
+                         'Prefix: ' + config.PREFIX + '\n' +
+                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
+                         'Type ' + config.PREFIX + 'help for commands';
         
-        const startText = `
-✨ *${config.BOT_NAME}*
-
-I'm a WhatsApp bot with various features.
-
-Type ${config.PREFIX}help to see all commands.
-Type ${config.PREFIX}menu for the main menu.
-        `.trim();
-        
-        await sock.sendMessage(jid, { text: startText }, { quoted: message });
+        await sock.sendMessage(jid, { 
+            text: startText
+        }, { quoted: message });
     }
 
-    async antideleteCommand(context) {
-        const { jid, sock, message, args } = context;
-        
-        if (!args[0]) {
-            const status = this.antiDeleteEnabled ? '✅ Enabled' : '❌ Disabled';
-            await sock.sendMessage(jid, {
-                text: `🚨 *Anti-Delete*\n\nStatus: ${status}\nMessages: ${this.recentDeletedMessages.length}\n\nCommands:\n• ${config.PREFIX}antidelete on/off\n• ${config.PREFIX}antidelete list`
-            }, { quoted: message });
-            return;
-        }
-        
-        const action = args[0].toLowerCase();
-        
-        if (action === 'on' || action === 'off') {
-            this.antiDeleteEnabled = action === 'on';
-            await sock.sendMessage(jid, { 
-                text: `Anti-delete ${this.antiDeleteEnabled ? '✅ Enabled' : '❌ Disabled'}` 
-            }, { quoted: message });
-        } else if (action === 'list') {
-            if (this.recentDeletedMessages.length > 0) {
-                let listText = '📋 *Deleted Messages*\n\n';
-                this.recentDeletedMessages.forEach((msg, index) => {
-                    const timeAgo = Math.floor((Date.now() - msg.deletedAt) / 1000);
-                    listText += `${index + 1}. ${timeAgo}s ago\n`;
-                });
-                await sock.sendMessage(jid, { text: listText }, { quoted: message });
+    async sendMessage(jid, content, options = {}) {
+        try {
+            if (this.sock && this.isConnected) {
+                botLogger.log('MESSAGE', `📤 Sending message to: ${jid}`);
+                const result = await this.sock.sendMessage(jid, content, { ...globalContextInfo, ...options });
+                botLogger.log('MESSAGE', `✅ Message sent successfully to: ${jid}`);
+                return result;
             } else {
-                await sock.sendMessage(jid, { text: 'No deleted messages.' }, { quoted: message });
+                botLogger.log('WARNING', 'Cannot send message: Bot not connected');
+                return null;
             }
-        }
-    }
-
-    async statusviewCommand(context) {
-        const { jid, sock, message, args } = context;
-        const action = args[0]?.toLowerCase();
-        
-        if (!action) {
-            await sock.sendMessage(jid, {
-                text: `📱 *Status Settings*\n\nAuto View: ${this.autoStatusView ? '✅' : '❌'}\nAuto Like: ${this.autoStatusLike ? '✅' : '❌'}\n\nCommands:\n• ${config.PREFIX}statusview on/off\n• ${config.PREFIX}statusview view\n• ${config.PREFIX}statusview like`
-            }, { quoted: message });
-            return;
-        }
-        
-        if (action === 'on' || action === 'off') {
-            this.autoStatusView = action === 'on';
-            this.autoStatusLike = action === 'on';
-            await sock.sendMessage(jid, { 
-                text: `Status features ${action === 'on' ? '✅ Enabled' : '❌ Disabled'}` 
-            }, { quoted: message });
-        } else if (action === 'view') {
-            this.autoStatusView = !this.autoStatusView;
-            await sock.sendMessage(jid, { 
-                text: `Auto-view ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}` 
-            }, { quoted: message });
-        } else if (action === 'like') {
-            this.autoStatusLike = !this.autoStatusLike;
-            await sock.sendMessage(jid, { 
-                text: `Auto-like ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}` 
-            }, { quoted: message });
-        }
-    }
-
-    async statussaverCommand(context) {
-        const { jid, sock, message, args } = context;
-        const action = args[0]?.toLowerCase();
-        
-        if (!action) {
-            await sock.sendMessage(jid, {
-                text: `💾 *Status Saver*\n\nSaver: ${this.statusSaver ? '✅' : '❌'}\nReply: ${this.statusReply ? '✅' : '❌'}\n\nCommands:\n• ${config.PREFIX}statussaver on/off\n• ${config.PREFIX}statussaver save\n• ${config.PREFIX}statussaver reply`
-            }, { quoted: message });
-            return;
-        }
-        
-        if (action === 'on' || action === 'off') {
-            this.statusSaver = action === 'on';
-            this.statusReply = action === 'on';
-            await sock.sendMessage(jid, { 
-                text: `Status saver ${action === 'on' ? '✅ Enabled' : '❌ Disabled'}` 
-            }, { quoted: message });
-        } else if (action === 'save') {
-            this.statusSaver = !this.statusSaver;
-            await sock.sendMessage(jid, { 
-                text: `Status Saver ${this.statusSaver ? '✅ Enabled' : '❌ Disabled'}` 
-            }, { quoted: message });
-        } else if (action === 'reply') {
-            this.statusReply = !this.statusReply;
-            await sock.sendMessage(jid, { 
-                text: `Status Reply ${this.statusReply ? '✅ Enabled' : '❌ Disabled'}` 
-            }, { quoted: message });
+        } catch (error) {
+            botLogger.log('ERROR', "Send error: " + error.message);
+            return null;
         }
     }
 }
@@ -1044,15 +1453,7 @@ Type ${config.PREFIX}menu for the main menu.
 // ==============================
 const bot = new SilvaBot();
 
-// Start the bot with error handling
-try {
-    bot.init();
-} catch (error) {
-    botLogger.log('ERROR', 'Failed to start bot: ' + error.message);
-    setTimeout(() => bot.init(), 10000);
-}
-
-// Export bot instance
+// Export bot instance for index.js
 module.exports = {
     bot,
     config,
@@ -1060,11 +1461,14 @@ module.exports = {
     functions: new FunctionsWrapper()
 };
 
-// Error handlers
+// ==============================
+// 🛡️ ERROR HANDLERS
+// ==============================
 process.on('uncaughtException', (error) => {
     botLogger.log('ERROR', `Uncaught Exception: ${error.message}`);
+    botLogger.log('ERROR', `Stack: ${error.stack}`);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    botLogger.log('ERROR', `Unhandled Rejection: ${reason}`);
+    botLogger.log('ERROR', `Unhandled Rejection at: ${promise}, reason: ${reason}`);
 });
