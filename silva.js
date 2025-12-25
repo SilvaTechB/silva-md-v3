@@ -717,7 +717,7 @@ class SilvaBot {
                         // Skip newsletters and broadcasts
                         if (message.key.remoteJid.includes('@newsletter') ||
                             message.key.remoteJid.includes('@broadcast')) {
-                            continue;
+                            return;
                         }
 
                         // Store message for anti-delete
