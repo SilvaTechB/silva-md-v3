@@ -1,106 +1,74 @@
-const axios = require("axios");
+const fg = require('api-dylux');
 
-const handler = {
-    help: ["fb", "fbdl", "facebook"],
-    tags: ["downloader", "media"],
-    command: /^(fb|fbdl|facebook)$/i,
-    group: false,
-    admin: false,
-    botAdmin: false,
-    owner: false,
+module.exports = {
+    name: 'facebook',
+    commands: ['facebook', 'fb', 'fbdl'],
+    category: 'downloader',
 
-    execute: async ({ jid, sock, message, args }) => {
-        const sender = message.key.participant || message.key.remoteJid;
-        const fbUrl = args[0];
-
-        if (!fbUrl || !fbUrl.includes("facebook.com")) {
-            return await sock.sendMessage(
-                jid,
-                {
-                    text:
-                        "❌ *Invalid Facebook link*\n\n" +
-                        "Example:\n" +
-                        ".fb https://www.facebook.com/share/v/xxxxx",
-                    contextInfo: ctx(sender, "Silva MD FB Hub 📘")
-                },
-                { quoted: message }
-            );
-        }
-
+    handler: async ({ sock, m, sender, args }) => {
         try {
-            await sock.sendMessage(
-                jid,
-                {
-                    text: "📥 *Fetching Facebook media…*",
-                    contextInfo: ctx(sender, "Silva MD FB Hub 📘")
-                },
-                { quoted: message }
-            );
+            const url = args[0];
 
-            const api =
-                "https://api-lite.silvatechinc.my.id/download/fbdown?url=" +
-                encodeURIComponent(fbUrl);
-
-            const { data } = await axios.get(api, { timeout: 15000 });
-
-            if (!data.success || !data.result?.medias?.length) {
-                throw new Error("No media found");
+            if (!url || !/(facebook\.com|fb\.watch)/i.test(url)) {
+                throw `📘 *Facebook Downloader*\n\n` +
+                      `📌 Example:\n` +
+                      `*.fb* https://www.facebook.com/watch/?v=xxxxx`;
             }
 
-            // Prefer highest quality (usually first item)
-            const media = data.result.medias[0];
+            const contextInfo = {
+                mentionedJid: [sender],
+                forwardingScore: 999,
+                isForwarded: true,
+                forwardedNewsletterMessageInfo: {
+                    newsletterJid: '120363200367779016@newsletter',
+                    newsletterName: 'Silva MD FB Hub 📘',
+                    serverMessageId: 201
+                }
+            };
 
-            if (media.type === "video") {
-                await sock.sendMessage(
-                    jid,
-                    {
-                        video: { url: media.url },
-                        caption:
-                            "🎥 *Facebook Video*\n\n" +
-                            "Powered by *Silva MD*",
-                        contextInfo: ctx(sender, "Silva MD FB Hub 📘")
-                    },
-                    { quoted: message }
-                );
-            } else {
-                await sock.sendMessage(
-                    jid,
-                    {
-                        text: "❌ Unsupported media type",
-                        contextInfo: ctx(sender, "Silva MD Errors ⚠️")
-                    },
-                    { quoted: message }
-                );
+            await sock.sendMessage(sender, {
+                text: '📥 *Downloading Facebook video…*',
+                contextInfo
+            }, { quoted: m });
+
+            const result = await fg.fbdl(url);
+
+            if (!result?.videoUrl) {
+                throw '❌ Failed to fetch Facebook video.';
             }
+
+            await sock.sendMessage(sender, {
+                video: { url: result.videoUrl },
+                mimetype: 'video/mp4',
+                caption:
+`🎬 *FACEBOOK VIDEO*
+
+📌 Title: ${result.title || 'Facebook Reel'}
+⚡ Fast download
+🚀 Powered by *Silva MD*`,
+                contextInfo: {
+                    ...contextInfo,
+                    externalAdReply: {
+                        title: 'Facebook Video Downloader',
+                        body: 'Silva MD • Clean & Fast',
+                        thumbnailUrl: 'https://files.catbox.moe/5uli5p.jpeg',
+                        sourceUrl: url,
+                        mediaType: 1,
+                        renderLargerThumbnail: true
+                    }
+                }
+            }, { quoted: m });
 
         } catch (err) {
-            await sock.sendMessage(
-                jid,
-                {
-                    text:
-                        "❌ *Facebook Download Error:*\n" +
-                        err.message,
-                    contextInfo: ctx(sender, "Silva MD Errors ⚠️")
-                },
-                { quoted: message }
-            );
+            console.error('❌ FB DOWNLOAD ERROR:', err);
+
+            await sock.sendMessage(sender, {
+                text:
+`⚠️ *Facebook Download Failed*
+
+${String(err).replace(/^Error:\s*/i, '')}`,
+                contextInfo: { mentionedJid: [sender] }
+            }, { quoted: m });
         }
     }
 };
-
-module.exports = { handler };
-
-
-// 🧠 Shared contextInfo builder
-function ctx(sender, name) {
-    return {
-        mentionedJid: [sender],
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-            newsletterJid: "120363200367779016@newsletter",
-            newsletterName: name,
-            serverMessageId: Math.floor(Math.random() * 1000)
-        }
-    };
-}
