@@ -55,6 +55,8 @@
     "lodash": "^4.17.21",
     "mime-types": "^2.1.35",
     "cheerio": "^1.0.0-rc.12",
+    "ruhend-scraper": "^8.0.3",
+    "api-dylux": "^1.8.3",
     "ytdl-core": "^4.11.5",
     "yt-search": "^2.10.4",
     "g-i-s": "^2.1.6",
