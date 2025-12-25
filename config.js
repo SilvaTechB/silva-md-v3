@@ -13,7 +13,7 @@ module.exports = {
     AUTO_REPLY: process.env.AUTO_REPLY === 'true',
     
     // Status Handler Settings
-    AUTO_STATUS_VIEW: process.env.AUTO_STATUS_VIEW === 'true',
+    AUTO_STATUS_SEEN: process.env.AUTO_STATUS_SEEN === 'true',
     AUTO_STATUS_REACT: process.env.AUTO_STATUS_REACT === 'true',
     STATUS_EMOJI: process.env.STATUS_EMOJI ? 
         process.env.STATUS_EMOJI.split(',') : ['❤️', '😍', '🔥'],
