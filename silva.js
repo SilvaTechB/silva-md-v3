@@ -699,7 +699,7 @@ class SilvaBot {
                         });
                     }
 
-                    continue;
+                    return;
                 }
 
                 // ===== NORMAL CHAT HANDLING =====
