@@ -279,4 +279,3 @@ Hard to break
 Bots come and go.
 Ecosystems endure.
 
----
