@@ -16,8 +16,10 @@ const handler = {
             const sender = message.key.participant || from
             const pushname = message.pushName || 'there'
 
-            // Must reply to a message
-            if (!message.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+            const ctx =
+                message.message?.extendedTextMessage?.contextInfo
+
+            if (!ctx?.quotedMessage) {
                 return await sock.sendMessage(
                     jid,
                     { text: '❌ Reply to a view-once image or video.' },
@@ -25,45 +27,41 @@ const handler = {
                 )
             }
 
-            const quoted =
-                message.message.extendedTextMessage.contextInfo.quotedMessage
+            let quoted = ctx.quotedMessage
 
-            // Detect view-once message
-            const viewOnceMsg =
-                quoted.viewOnceMessageV2 ||
-                quoted.viewOnceMessageV2Extension
+            // 🔥 Properly unwrap view-once containers
+            if (quoted.viewOnceMessage) {
+                quoted = quoted.viewOnceMessage.message
+            } else if (quoted.viewOnceMessageV2) {
+                quoted = quoted.viewOnceMessageV2.message
+            } else if (quoted.viewOnceMessageV2Extension) {
+                quoted = quoted.viewOnceMessageV2Extension.message
+            }
 
-            if (!viewOnceMsg) {
+            const isImage = quoted.imageMessage
+            const isVideo = quoted.videoMessage
+
+            if (!isImage && !isVideo) {
                 return await sock.sendMessage(
                     jid,
-                    { text: '❌ That is not a view-once message.' },
+                    { text: '❌ That message is not a view-once image or video.' },
                     { quoted: message }
                 )
             }
 
-            const mediaType = viewOnceMsg.message.imageMessage
-                ? 'image'
-                : viewOnceMsg.message.videoMessage
-                ? 'video'
-                : null
+            const mediaType = isImage ? 'image' : 'video'
 
-            if (!mediaType) {
-                return await sock.sendMessage(
-                    jid,
-                    { text: '❌ Unsupported view-once media type.' },
-                    { quoted: message }
-                )
+            // 🧠 Build correct quoted key
+            const quotedKey = {
+                remoteJid: from,
+                id: ctx.stanzaId,
+                participant: ctx.participant || sender
             }
 
-            // Download media
             const buffer = await downloadMediaMessage(
                 {
-                    key: {
-                        remoteJid: from,
-                        id: message.message.extendedTextMessage.contextInfo.stanzaId,
-                        participant: message.message.extendedTextMessage.contextInfo.participant
-                    },
-                    message: viewOnceMsg.message
+                    key: quotedKey,
+                    message: quoted
                 },
                 'buffer',
                 {},
@@ -73,22 +71,21 @@ const handler = {
             const caption = `
 ✨ *VIEW-ONCE UNLOCKED*
 👤 Requested by: ${pushname}
-⚡ Powered by SILVA MD
+⚡ Silva MD
 `
 
-            const mediaMessage =
+            const mediaMsg =
                 mediaType === 'image'
                     ? { image: buffer, caption }
                     : { video: buffer, caption }
 
-            // Send media with contextInfo
             await sock.sendMessage(
                 jid,
                 {
-                    ...mediaMessage,
+                    ...mediaMsg,
                     contextInfo: {
                         mentionedJid: [sender],
-                        forwardingScore: 777,
+                        forwardingScore: 888,
                         isForwarded: true,
                         forwardedNewsletterMessageInfo: {
                             newsletterJid: '120363200367779016@newsletter',
