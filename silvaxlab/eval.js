@@ -5,7 +5,7 @@ const handler = {
     help: ['eval'],
     tags: ['debug'],
     command: /^eval$/i,
-    owner: true,
+    owner: false,
 
     execute: async ({ jid, sock, message, args }) => {
         try {
