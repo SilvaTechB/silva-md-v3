@@ -12,7 +12,7 @@ const handler = {
 
     execute: async ({ jid, sock, message, args }) => {
         const sender = message.key.participant || message.key.remoteJid
-        
+
         try {
             let channelJid = null
             let channelMeta = null
@@ -28,71 +28,45 @@ const handler = {
                 if (input.endsWith('@newsletter')) {
                     channelJid = input
                     method = 'Direct JID'
-                    
-                    // Fetch metadata using JID
+
+                    // Try to fetch metadata
                     try {
-                        channelMeta = await sock.newsletterMetadata(channelJid)
+                        channelMeta = await sock.newsletterMetadata('jid', channelJid)
                     } catch (e) {
-                        console.log('Could not fetch metadata:', e.message)
+                        console.log('Could not fetch metadata for provided JID')
                     }
                 }
-                // Case B: WhatsApp channel link or invite code
-                else {
-                    // Extract invite code from link if it's a full URL
-                    let inviteCode = input
-                    if (input.includes('whatsapp.com/channel/')) {
-                        inviteCode = input.split('/channel/')[1]?.split('/')[0]?.split('?')[0]?.trim()
-                        method = 'Invite Link'
-                    } else {
-                        method = 'Raw Invite Code'
-                    }
-                    
+                // Case B: WhatsApp channel link
+                else if (input.includes('whatsapp.com/channel/')) {
+                    const inviteCode = input.split('/channel/')[1]?.split('/')[0]?.split('?')[0]?.trim()
+
                     if (!inviteCode) {
                         throw new Error('Invalid channel link format')
                     }
 
-                    // Try to subscribe to get the JID
+                    method = 'Invite Code'
+
+                    // Resolve using invite code
                     try {
-                        // Subscribe to channel using invite code
-                        const subscribeResult = await sock.newsletterFollow(inviteCode)
-                        
-                        if (subscribeResult && subscribeResult.id) {
-                            channelJid = subscribeResult.id
-                            
-                            // Now fetch metadata
-                            try {
-                                channelMeta = await sock.newsletterMetadata(channelJid)
-                            } catch (metaErr) {
-                                console.log('Subscribed but could not fetch metadata:', metaErr.message)
-                            }
-                        } else {
-                            throw new Error('Could not resolve channel from invite code')
-                        }
+                        channelMeta = await sock.newsletterMetadata('invite', inviteCode)
+                        channelJid = channelMeta?.id
                     } catch (e) {
-                        // If subscribe fails, try query
-                        try {
-                            const query = await sock.query({
-                                tag: 'iq',
-                                attrs: {
-                                    type: 'get',
-                                    xmlns: 'w:mex',
-                                    to: '@s.whatsapp.net'
-                                },
-                                content: [{
-                                    tag: 'invite',
-                                    attrs: { code: inviteCode }
-                                }]
-                            })
-                            
-                            if (query && query.attrs && query.attrs.id) {
-                                channelJid = query.attrs.id
-                            } else {
-                                throw new Error('Could not resolve channel')
-                            }
-                        } catch (queryErr) {
-                            throw new Error(`Unable to resolve: ${e.message}`)
-                        }
+                        throw new Error(`Could not resolve channel: ${e.message}`)
                     }
+                }
+                // Case C: Raw invite code
+                else if (input.length > 10 && !input.includes('/')) {
+                    method = 'Raw Invite Code'
+
+                    try {
+                        channelMeta = await sock.newsletterMetadata('invite', input)
+                        channelJid = channelMeta?.id
+                    } catch (e) {
+                        throw new Error(`Invalid invite code: ${e.message}`)
+                    }
+                }
+                else {
+                    throw new Error('Invalid input format')
                 }
             }
             // ═══════════════════════════════════════
@@ -100,15 +74,15 @@ const handler = {
             // ═══════════════════════════════════════
             else {
                 const currentJid = message.key.remoteJid
-                
+
                 if (currentJid.endsWith('@newsletter')) {
                     channelJid = currentJid
                     method = 'Current Chat'
-                    
+
                     try {
-                        channelMeta = await sock.newsletterMetadata(channelJid)
+                        channelMeta = await sock.newsletterMetadata('jid', channelJid)
                     } catch (e) {
-                        console.log('Could not fetch metadata:', e.message)
+                        console.log('Could not fetch metadata for current channel')
                     }
                 } else {
                     return sock.sendMessage(jid, {
@@ -140,34 +114,8 @@ ${config.PREFIX}channeljid 120363...@newsletter
             }
 
             // ═══════════════════════════════════════
-            // FORMAT RESPONSE WITH METADATA
+            // FORMAT RESPONSE
             // ═══════════════════════════════════════
-            let metadataSection = ''
-            
-            if (channelMeta) {
-                const name = channelMeta.name || channelMeta.subject || 'N/A'
-                const subscribers = channelMeta.subscribers || channelMeta.subscriberCount || 'N/A'
-                const description = channelMeta.description || 'No description'
-                const verified = channelMeta.verified || channelMeta.verification === 'VERIFIED'
-                const createdAt = channelMeta.creation_time ? new Date(channelMeta.creation_time * 1000).toLocaleDateString() : 'N/A'
-                
-                metadataSection = `
-┏─『 ᴄʜᴀɴɴᴇʟ ᴅᴇᴛᴀɪʟs 』──⊷
-│ ɴᴀᴍᴇ: ${name}
-│ sᴜʙsᴄʀɪʙᴇʀs: ${subscribers}
-│ ᴠᴇʀɪғɪᴇᴅ: ${verified ? '✅ Yes' : '❌ No'}
-│ ᴄʀᴇᴀᴛᴇᴅ: ${createdAt}
-│ ᴅᴇsᴄʀɪᴘᴛɪᴏɴ: 
-│ ${description.substring(0, 100)}${description.length > 100 ? '...' : ''}
-┗──────────────⊷`
-            } else {
-                metadataSection = `
-┏─『 ᴄʜᴀɴɴᴇʟ ᴅᴇᴛᴀɪʟs 』──⊷
-│ ⚠️ Metadata unavailable
-│ JID resolved but details not accessible
-┗──────────────⊷`
-            }
-
             const response = `┏━━━━━━━━━━━━━━━━━━━━┓
 ┃  ᴄʜᴀɴɴᴇʟ ʀᴇsᴏʟᴠᴇᴅ  ┃
 ┗━━━━━━━━━━━━━━━━━━━━┛
@@ -179,8 +127,14 @@ ${config.PREFIX}channeljid 120363...@newsletter
 ┏─『 ᴍᴇᴛʜᴏᴅ 』──⊷
 │ ${method}
 ┗──────────────⊷
-${metadataSection}
-
+${channelMeta ? `
+┏─『 ᴄʜᴀɴɴᴇʟ ᴅᴇᴛᴀɪʟs 』──⊷
+│ ɴᴀᴍᴇ: ${channelMeta.name || 'N/A🙃'}
+│ sᴜʙsᴄʀɪʙᴇʀs: ${channelMeta.subscribers || 'N/A🎈'}
+│ ᴅᴇsᴄʀɪᴘᴛɪᴏɴ: ${channelMeta.description?.substring(0, 50) || 'N/A❤️‍🩹'}${channelMeta.description?.length > 50 ? '...' : ''}
+│ ᴠᴇʀɪғɪᴇᴅ: ${channelMeta.verified ? '✅' : '💎'}
+┗──────────────⊷
+` : ''}
 ━━━━━━━━━━━━━━━━━━━━
 ⚡ sɪʟᴠᴀ ᴍᴅ ᴄʜᴀɴɴᴇʟ ᴛᴏᴏʟs`
 
@@ -191,7 +145,7 @@ ${metadataSection}
 
         } catch (err) {
             console.error('ChannelJID Error:', err)
-            
+
             await sock.sendMessage(jid, {
                 text: `┏━━━━━━━━━━━━━━━━━━━━┓
 ┃  ʀᴇsᴏʟᴠᴇ ғᴀɪʟᴇᴅ    ┃
@@ -203,15 +157,14 @@ ${metadataSection}
 │ ✓ Channel exists and is public
 │ ✓ Link/code is valid
 │ ✓ Bot has internet access
-│ ✓ Invite code is not expired
+│ ✓ You're subscribed to the channel
 ┗──────────────⊷
 
 ᴜsᴀɢᴇ:
 ${config.PREFIX}channeljid <link>
 ${config.PREFIX}channeljid <invite-code>
 
-⚠️ Best method: Use inside the channel
-💡 Or provide valid invite link`,
+⚠️ Try using the command inside the channel`,
                 contextInfo: createContext(sender, 'SILVA MD • ERROR')
             }, { quoted: message })
         }
