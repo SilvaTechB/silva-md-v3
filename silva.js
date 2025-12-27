@@ -537,7 +537,7 @@ class PluginManager {
 }
 
 // ==============================
-// 🤖 MAIN BOT CLASS (FIXED FOR LID OWNER ISSUE)
+// 🤖 MAIN BOT CLASS
 // ==============================
 class SilvaBot {
     constructor() {
@@ -552,8 +552,6 @@ class SilvaBot {
         this.antiDeleteEnabled = config.ANTIDELETE || true;
         this.recentDeletedMessages = [];
         this.maxDeletedMessages = 20;
-        this.autoStatusView = config.AUTO_STATUS_VIEW || false;
-        this.autoStatusLike = config.AUTO_STATUS_LIKE || false;
         
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
@@ -569,8 +567,7 @@ class SilvaBot {
             stats: this.statsCommand.bind(this),
             plugins: this.pluginsCommand.bind(this),
             start: this.startCommand.bind(this),
-            antidelete: this.antideleteCommand.bind(this),
-            statusview: this.statusviewCommand.bind(this)
+            antidelete: this.antideleteCommand.bind(this)
         };
     }
 
@@ -754,7 +751,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 const { messages, type } = m;
                 botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
                 
-                // First, handle status updates using the status handler
+                // Handle status updates using the status handler
                 await statusHandler.handle({
                     messages,
                     type,
@@ -762,9 +759,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     config,
                     logMessage: (level, msg) => {
                         console.log(`[${level}] ${msg}`);
-                    },
-                    unwrapStatus: this.unwrapStatus.bind(this),
-                    saveMedia: this.saveMedia.bind(this)
+                    }
                 });
                 
                 // Then handle regular messages
@@ -828,48 +823,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 }
             }
         });
-    }
-
-    // Utility method to unwrap status message
-    unwrapStatus(message) {
-        try {
-            if (message.message?.protocolMessage?.type === 14) {
-                const statusMessage = message.message.protocolMessage;
-                return {
-                    key: message.key,
-                    message: statusMessage,
-                    isStatus: true
-                };
-            }
-            return null;
-        } catch (error) {
-            return null;
-        }
-    }
-
-    // Utility method to save media
-    async saveMedia(message, filename) {
-        try {
-            if (getContentType(message.message)) {
-                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
-                    logger,
-                    reuploadRequest: this.sock.updateMediaMessage
-                });
-                
-                const tempDir = './temp';
-                if (!fs.existsSync(tempDir)) {
-                    fs.mkdirSync(tempDir, { recursive: true });
-                }
-                
-                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
-                fs.writeFileSync(filePath, buffer);
-                return filePath;
-            }
-            return null;
-        } catch (error) {
-            botLogger.log('ERROR', 'Failed to save media: ' + error.message);
-            return null;
-        }
     }
 
     // Detect bot's LID by checking messages sent by the bot
@@ -999,7 +952,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
-    // FIXED: Handle owner messages correctly with LID support
+    // Handle messages
     async handleMessages(m) {
         if (!m.messages || !Array.isArray(m.messages)) {
             return;
@@ -1114,7 +1067,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     }
 
     // ==============================
-    // 💬 COMMAND HANDLERS (FIXED FOR FROM_ME MESSAGES)
+    // 💬 COMMAND HANDLERS
     // ==============================
     
     async antideleteCommand(context) {
@@ -1221,70 +1174,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 }, { quoted: message });
         }
     }
-    
-    async statusviewCommand(context) {
-        const { jid, sock, message, args, sender } = context;
-        // FIX: If message is fromMe, treat as owner
-        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
-        
-        if (!isOwner) {
-            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
-            return;
-        }
-        
-        const action = args[0]?.toLowerCase();
-        
-        if (!action) {
-            await sock.sendMessage(jid, {
-                text: `📊 *Status Auto Settings*\n\n` +
-                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\n` +
-                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\n\n` +
-                      `Commands:\n` +
-                      `• ${config.PREFIX}statusview on - Enable both\n` +
-                      `• ${config.PREFIX}statusview off - Disable both\n` +
-                      `• ${config.PREFIX}statusview view - Toggle auto-view\n` +
-                      `• ${config.PREFIX}statusview like - Toggle auto-like`
-            }, { quoted: message });
-            return;
-        }
-        
-        switch(action) {
-            case 'on':
-                this.autoStatusView = true;
-                this.autoStatusLike = true;
-                await sock.sendMessage(jid, {
-                    text: '✅ Auto-view and auto-like enabled for status updates.'
-                }, { quoted: message });
-                break;
-                
-            case 'off':
-                this.autoStatusView = false;
-                this.autoStatusLike = false;
-                await sock.sendMessage(jid, {
-                    text: '❌ Auto-view and auto-like disabled.'
-                }, { quoted: message });
-                break;
-                
-            case 'view':
-                this.autoStatusView = !this.autoStatusView;
-                await sock.sendMessage(jid, {
-                    text: `Auto-view: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}`
-                }, { quoted: message });
-                break;
-                
-            case 'like':
-                this.autoStatusLike = !this.autoStatusLike;
-                await sock.sendMessage(jid, {
-                    text: `Auto-like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}`
-                }, { quoted: message });
-                break;
-                
-            default:
-                await sock.sendMessage(jid, {
-                    text: 'Invalid option. Use `' + config.PREFIX + 'statusview` for help.'
-                }, { quoted: message });
-        }
-    }
 
     async helpCommand(context) {
         const { jid, sock, message } = context;
@@ -1301,7 +1190,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         helpText += '• ' + config.PREFIX + 'plugins - List plugins\n';
         helpText += '• ' + config.PREFIX + 'stats - Bot statistics\n';
         helpText += '• ' + config.PREFIX + 'antidelete - Recover deleted messages\n';
-        helpText += '• ' + config.PREFIX + 'statusview - Auto status settings (Owner)\n';
         
         if (plugins.length > 0) {
             helpText += '\n*Loaded Plugins:*\n';
@@ -1390,8 +1278,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          '📦 Platform: ' + process.platform + '\n' +
                          '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\n' +
                          '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\n' +
-                         '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
-                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\n' +
                          '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n' +
                          '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\n' +
                          '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\n' +
