@@ -746,24 +746,44 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
         sock.ev.on('creds.update', saveCreds);
 
+        // ==============================
+        // FIXED: messages.upsert Event Handler
+        // ==============================
         sock.ev.on('messages.upsert', async (m) => {
             try {
                 const { messages, type } = m;
                 botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
                 
-                // Handle status updates using the status handler
-                await statusHandler.handle({
-                    messages,
-                    type,
-                    sock,
-                    config,
-                    logMessage: (level, msg) => {
-                        console.log(`[${level}] ${msg}`);
-                    }
-                });
+                // CRITICAL FIX: Handle status updates FIRST before any filtering
+                // Check if ANY message is a status update
+                const hasStatusMessages = messages?.some(msg => 
+                    msg.key.remoteJid === 'status@broadcast'
+                );
                 
-                // Then handle regular messages
-                await this.handleMessages(m);
+                if (hasStatusMessages) {
+                    botLogger.log('MESSAGE', '📊 Status update detected, processing...');
+                    // Handle status updates using the status handler
+                    await statusHandler.handle({
+                        messages,
+                        type,
+                        sock,
+                        config,
+                        logMessage: (level, msg) => {
+                            botLogger.log(level.toUpperCase(), msg);
+                        }
+                    });
+                }
+                
+                // Then handle regular messages (filter out status broadcasts for regular processing)
+                const regularMessages = messages?.filter(msg => 
+                    msg.key.remoteJid !== 'status@broadcast' && 
+                    !msg.key.remoteJid.includes('@newsletter') &&
+                    !msg.key.remoteJid.includes('@broadcast')
+                );
+                
+                if (regularMessages && regularMessages.length > 0) {
+                    await this.handleMessages({ messages: regularMessages, type });
+                }
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
             }
@@ -808,7 +828,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
         });
 
-        // Log outgoing messages
+        // Log outgoing messages - CORRECTED: Using messages.upsert for sent messages
         sock.ev.on('messages.upsert', async (m) => {
             if (m.type === 'notify') {
                 for (const msg of m.messages || []) {
