@@ -11,72 +11,69 @@ const handler = {
         const sender = message.key.participant || message.key.remoteJid;
 
         try {
-            let targetJid = null;
+            let channelJid = null;
 
-            // 1️⃣ If a link or JID is provided
+            // 1️⃣ If argument provided
             if (args[0]) {
                 const input = args[0];
 
-                // Newsletter JID directly
+                // Already a newsletter JID
                 if (input.endsWith('@newsletter')) {
-                    targetJid = input;
+                    channelJid = input;
                 }
 
-                // WhatsApp channel/newsletter link
+                // WhatsApp channel link
                 else if (input.includes('whatsapp.com/channel/')) {
-                    const code = input.split('/').pop().trim();
-                    targetJid = `120363${code}@newsletter`;
+                    const inviteCode = input.split('/channel/')[1]?.trim();
+                    if (!inviteCode) throw new Error('Invalid channel link');
+
+                    // Ask WhatsApp to resolve it
+                    const meta = await sock.newsletterMetadata(inviteCode);
+                    channelJid = meta?.id;
                 }
 
                 else {
-                    return sock.sendMessage(
-                        jid,
-                        {
-                            text: '❌ Invalid channel link or JID',
-                            contextInfo: ctx(sender, 'Silva MD Channels 📢')
-                        },
-                        { quoted: message }
-                    );
+                    throw new Error('Invalid channel input');
                 }
             }
 
-            // 2️⃣ If no argument, use current chat JID
+            // 2️⃣ No argument → current chat
             else {
-                targetJid = message.key.remoteJid;
+                channelJid = message.key.remoteJid;
             }
 
-            // 3️⃣ Final validation
-            if (!targetJid.endsWith('@newsletter')) {
+            // 3️⃣ Validate
+            if (!channelJid || !channelJid.endsWith('@newsletter')) {
                 return sock.sendMessage(
                     jid,
                     {
-                        text:
-                            '❌ This is not a WhatsApp channel/newsletter\n\n' +
-                            '📌 Tip:\n' +
-                            '.channeljid <channel link or JID>',
+                        text: '❌ This is not a WhatsApp channel/newsletter',
                         contextInfo: ctx(sender, 'Silva MD Channels 📢')
                     },
                     { quoted: message }
                 );
             }
 
-            // 4️⃣ Output ONLY the JID (clean & obvious)
+            // 4️⃣ Send REAL numeric JID
             await sock.sendMessage(
                 jid,
                 {
-                    text: `${targetJid}`,
+                    text: channelJid,
                     contextInfo: ctx(sender, 'Silva MD Channels 📢')
                 },
                 { quoted: message }
             );
 
         } catch (err) {
-            console.error('❌ ChannelJID Error:', err);
+            console.error('ChannelJID Error:', err);
 
             await sock.sendMessage(
                 jid,
                 {
-                    text: '⚠️ Failed to fetch channel JID',
+                    text:
+                        '⚠️ Failed to resolve channel JID\n\n' +
+                        '✔ Make sure the channel exists\n' +
+                        '✔ Bot must have internet access',
                     contextInfo: ctx(sender, 'Silva MD Errors ⚠️')
                 },
                 { quoted: message }
@@ -88,7 +85,7 @@ const handler = {
 module.exports = { handler };
 
 
-// 🧠 Shared contextInfo builder (Silva MD standard)
+// 🧠 Silva MD contextInfo helper
 function ctx(sender, name) {
     return {
         mentionedJid: [sender],
