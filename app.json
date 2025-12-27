@@ -32,16 +32,117 @@
       "description": "Bot owner's WhatsApp number with country code",
       "required": true
     },
+    "CONNECTED_NUMBER": {
+      "description": "Bot's connected phone number (optional, auto-detected)",
+      "required": false
+    },
+    "BOT_MODE": {
+      "description": "Bot mode: public or private",
+      "value": "public",
+      "required": false
+    },
+    "DEBUG_MODE": {
+      "description": "Enable debug logging",
+      "value": "true",
+      "required": false
+    },
+    
+    // Status Settings
+    "AUTO_STATUS_SEEN": {
+      "description": "Automatically mark status as seen",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_STATUS_REACT": {
+      "description": "Automatically react to status updates",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_STATUS_REPLY": {
+      "description": "Automatically reply to status updates",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_STATUS_MSG": {
+      "description": "Message to send when auto-replying to status",
+      "value": "✅ Status viewed by Silva MD",
+      "required": false
+    },
+    "STATUS_Saver": {
+      "description": "Save status updates (true/false)",
+      "value": "true",
+      "required": false
+    },
+    "STATUS_REPLY": {
+      "description": "Send reply after saving status",
+      "value": "true",
+      "required": false
+    },
+    "STATUS_MSG": {
+      "description": "Message to send when status is saved",
+      "value": "SILVA MD 💖 SUCCESSFULLY VIEWED YOUR STATUS",
+      "required": false
+    },
+    "CUSTOM_REACT_EMOJIS": {
+      "description": "Custom emojis for status reactions (comma-separated)",
+      "value": "❤️,🔥,💯,😍,👏",
+      "required": false
+    },
+    
+    // Newsletter Settings
+    "AUTO_REACT_NEWSLETTER": {
+      "description": "Automatically react to newsletter messages",
+      "value": "true",
+      "required": false
+    },
+    
+    // Anti-delete Settings
+    "ANTIDELETE": {
+      "description": "Enable anti-delete feature",
+      "value": "true",
+      "required": false
+    },
+    "ANTI_DELETE_GROUP": {
+      "description": "Enable anti-delete in groups",
+      "value": "true",
+      "required": false
+    },
+    "ANTI_DELETE_PRIVATE": {
+      "description": "Enable anti-delete in private chats",
+      "value": "true",
+      "required": false
+    },
+    
+    // AI Settings
     "OPENAI_API_KEY": {
       "description": "OpenAI API key for AI features",
       "required": false
     },
-    "MONGODB_URI": {
-      "description": "MongoDB URI for database (optional)",
+    
+    // Other Settings
+    "AUTO_READ": {
+      "description": "Automatically mark messages as read",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_TYPING": {
+      "description": "Show typing indicator",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_REPLY": {
+      "description": "Enable auto-reply for unknown commands",
+      "value": "true",
+      "required": false
+    },
+    
+    // Allowed Users (for private mode)
+    "ALLOWED_USERS": {
+      "description": "Allowed users for private mode (comma-separated numbers)",
       "required": false
     }
   },
-   "buildpacks": [
+  "buildpacks": [
     {
       "url": "heroku/nodejs"
     },
@@ -52,4 +153,4 @@
       "url": "https://github.com/clhuang/heroku-buildpack-webp-binaries.git"
     }
   ]
-  }
+}
