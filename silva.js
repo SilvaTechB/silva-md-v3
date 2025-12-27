@@ -11,7 +11,10 @@ const {
     makeCacheableSignalKeyStore,
     fetchLatestBaileysVersion,
     delay,
-    proto
+    proto,
+    isJidBroadcast,
+    isJidStatusBroadcast,
+    isJidGroup
 } = require('@whiskeysockets/baileys');
 
 const { Boom } = require('@hapi/boom');
@@ -24,9 +27,6 @@ const pino = require('pino');
 
 // Import configuration
 const config = require('./config.js');
-
-// Import status handler
-const statusHandler = require('./lib/status.js');
 
 // Global Context Info
 const globalContextInfo = {
@@ -537,7 +537,7 @@ class PluginManager {
 }
 
 // ==============================
-// 🤖 MAIN BOT CLASS (FIXED FOR LID OWNER ISSUE)
+// 🤖 MAIN BOT CLASS (UPDATED WITH NEW FUNCTIONALITY)
 // ==============================
 class SilvaBot {
     constructor() {
@@ -552,8 +552,6 @@ class SilvaBot {
         this.antiDeleteEnabled = config.ANTIDELETE || true;
         this.recentDeletedMessages = [];
         this.maxDeletedMessages = 20;
-        this.autoStatusView = config.AUTO_STATUS_VIEW || false;
-        this.autoStatusLike = config.AUTO_STATUS_LIKE || false;
         
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
@@ -569,8 +567,7 @@ class SilvaBot {
             stats: this.statsCommand.bind(this),
             plugins: this.pluginsCommand.bind(this),
             start: this.startCommand.bind(this),
-            antidelete: this.antideleteCommand.bind(this),
-            statusview: this.statusviewCommand.bind(this)
+            antidelete: this.antideleteCommand.bind(this)
         };
     }
 
@@ -626,11 +623,12 @@ class SilvaBot {
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
+                // FIXED: Only ignore @broadcast, NOT @newsletter
                 shouldIgnoreJid: (jid) => {
                     if (!jid || typeof jid !== 'string') {
                         return false;
                     }
-                    return jid === 'status@broadcast' || jid.includes('@newsletter');
+                    return jid === 'status@broadcast' || jid.includes('@broadcast');
                 },
                 getMessage: async (key) => {
                     try {
@@ -702,6 +700,9 @@ class SilvaBot {
                 
                 this.startKeepAlive();
                 
+                // ✅ AUTO FOLLOW NEWSLETTERS (NEW FEATURE)
+                await this.autoFollowNewsletters(sock);
+                
                 // Send connection message to owner
                 if (config.OWNER_NUMBER) {
                     try {
@@ -749,28 +750,230 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
         sock.ev.on('creds.update', saveCreds);
 
-        sock.ev.on('messages.upsert', async (m) => {
+        // === ONE consolidated messages.upsert handler for statuses, newsletters and commands ===
+        sock.ev.on('messages.upsert', async ({ messages, type }) => {
             try {
-                const { messages, type } = m;
-                botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
-                
-                // First, handle status updates using the status handler
-                await statusHandler.handle({
-                    messages,
-                    type,
-                    sock,
-                    config,
-                    logMessage: (level, msg) => {
-                        console.log(`[${level}] ${msg}`);
-                    },
-                    unwrapStatus: this.unwrapStatus.bind(this),
-                    saveMedia: this.saveMedia.bind(this)
-                });
-                
-                // Then handle regular messages
-                await this.handleMessages(m);
+                if (!Array.isArray(messages) || messages.length === 0) return;
+
+                // ✅ FIX 1: Correct event filtering - process only real-time messages
+                if (type && !['notify', 'append'].includes(type)) {
+                    botLogger.log('DEBUG', `Skipping message type: ${type}`);
+                    return;
+                }
+
+                for (const m of messages) {
+                    // ---- STATUS handling (status@broadcast)
+                    if (m.key.remoteJid === 'status@broadcast') {
+                        try {
+                            const statusId = m.key.id;
+                            const userJid = m.key.participant;
+                            botLogger.log('EVENT', `Status update from ${userJid}: ${statusId}`);
+
+                            const { inner, msgType } = this.unwrapStatusMessage(m);
+
+                            if (config.AUTO_STATUS_SEEN) {
+                                try {
+                                    await sock.readMessages([m.key]);
+                                    botLogger.log('INFO', `Status seen: ${statusId}`);
+                                } catch (e) {
+                                    botLogger.log('WARN', `Status seen failed: ${e.message}`);
+                                }
+                            }
+
+                            if (config.AUTO_STATUS_REACT) {
+                                try {
+                                    const emojis = (config.CUSTOM_REACT_EMOJIS || '❤️,🔥,💯,😍,👏').split(',');
+                                    const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)].trim();
+                                    await sock.sendMessage(userJid, {
+                                        react: {
+                                            text: randomEmoji,
+                                            key: {
+                                                remoteJid: 'status@broadcast',
+                                                id: statusId,
+                                                participant: userJid
+                                            }
+                                        }
+                                    });
+                                    botLogger.log('INFO', `Reacted on status ${statusId} with: ${randomEmoji}`);
+                                } catch (e) {
+                                    botLogger.log('WARN', `Status reaction failed: ${e.message}`);
+                                }
+                            }
+
+                            if (config.AUTO_STATUS_REPLY) {
+                                try {
+                                    await sock.sendMessage(userJid, {
+                                        text: config.AUTO_STATUS_MSG || '✅ Status viewed by Silva MD',
+                                        contextInfo: {
+                                            stanzaId: statusId,
+                                            participant: userJid,
+                                            quotedMessage: inner
+                                        }
+                                    });
+                                    botLogger.log('INFO', `Status replied: ${statusId}`);
+                                } catch (e) {
+                                    botLogger.log('WARN', `Status reply failed: ${e.message}`);
+                                }
+                            }
+
+                            if (config.Status_Saver === 'true') {
+                                try {
+                                    const userName = await sock.getName(userJid) || 'Unknown';
+                                    const statusHeader = 'AUTO STATUS SAVER';
+                                    let caption = `${statusHeader}\n\n*🩵 Status From:* ${userName}`;
+
+                                    switch (msgType) {
+                                        case 'imageMessage':
+                                        case 'videoMessage':
+                                            if (inner[msgType]?.caption) caption += `\n*🩵 Caption:* ${inner[msgType].caption}`;
+                                            await this.saveMedia({ message: inner }, msgType, sock, caption);
+                                            break;
+                                        case 'audioMessage':
+                                            caption += `\n*🩵 Audio Status*`;
+                                            await this.saveMedia({ message: inner }, msgType, sock, caption);
+                                            break;
+                                        case 'extendedTextMessage':
+                                            caption = `${statusHeader}\n\n${inner.extendedTextMessage?.text || ''}`;
+                                            await sock.sendMessage(sock.user.id, { text: caption });
+                                            break;
+                                        default:
+                                            botLogger.log('WARN', `Unsupported status type: ${msgType}`);
+                                            break;
+                                    }
+
+                                    if (config.STATUS_REPLY === 'true') {
+                                        const replyMsg = config.STATUS_MSG || 'SILVA MD 💖 SUCCESSFULLY VIEWED YOUR STATUS';
+                                        await sock.sendMessage(userJid, { text: replyMsg });
+                                    }
+                                    botLogger.log('INFO', `Status saved: ${statusId}`);
+                                } catch (e) {
+                                    botLogger.log('ERROR', `Status save failed: ${e.message}`);
+                                }
+                            }
+                        } catch (e) {
+                            botLogger.log('ERROR', `Status handler error: ${e.message}`);
+                        }
+
+                        // continue to next message in the upsert array
+                        continue;
+                    }
+
+                    // ---- For other messages: newsletter / broadcast / group / private commands
+                    if (!m.message) continue;
+
+                    const sender = m.key.remoteJid;
+                    const isGroupMsg = isJidGroup(sender);
+                    const isNewsletter = sender && sender.endsWith && sender.endsWith('@newsletter');
+                    const isBroadcast = isJidBroadcast(sender) || isJidStatusBroadcast(sender);
+
+                    botLogger.log('MESSAGE', `New ${isNewsletter ? 'newsletter' : isGroupMsg ? 'group' : isBroadcast ? 'broadcast' : 'private'} message from ${sender}`);
+
+                    // --- Auto-react to newsletters / channels
+                    if (isNewsletter && config.AUTO_REACT_NEWSLETTER) {
+                        try {
+                            // pick a random emoji for variety
+                            const emojis = ['🤖','🔥','💫','❤️','👍','💯','✨','👏','😎'];
+                            const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+                            await sock.sendMessage(m.key.remoteJid, {
+                                react: { text: randomEmoji, key: m.key }
+                            });
+                            botLogger.log('INFO', `Auto-reacted with ${randomEmoji} to ${m.key.remoteJid}`);
+                        } catch (e) {
+                            botLogger.log('ERROR', `Newsletter react failed: ${e.stack || e.message}`);
+                        }
+                    }
+
+                    // Store message and handle commands for non-status messages
+                    await this.store.setMessage(m.key, m);
+
+                    const jid = m.key.remoteJid;
+                    const msgSender = m.key.participant || jid;
+                    const isGroup = jid.endsWith('@g.us');
+                    const isFromMe = m.key.fromMe;
+                    
+                    // Skip newsletters for command processing (optional)
+                    if (isNewsletter) {
+                        continue;
+                    }
+
+                    // Extract text from message
+                    let text = '';
+                    if (m.message?.conversation) {
+                        text = m.message.conversation;
+                    } else if (m.message?.extendedTextMessage?.text) {
+                        text = m.message.extendedTextMessage.text;
+                    } else if (m.message?.imageMessage?.caption) {
+                        text = m.message.imageMessage.caption;
+                    } else if (m.message?.videoMessage?.caption) {
+                        text = m.message.videoMessage.caption;
+                    } else if (m.message?.documentMessage?.caption) {
+                        text = m.message.documentMessage.caption;
+                    } else if (m.message?.audioMessage) {
+                        text = m.message.audioMessage?.caption || '';
+                    }
+                    
+                    if (text) {
+                        botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
+                    }
+
+                    // Check if message starts with prefix
+                    if (text && text.startsWith(config.PREFIX)) {
+                        botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${msgSender}`);
+                        
+                        // SPECIAL FIX: If message is fromMe, automatically treat as owner
+                        const isOwner = isFromMe ? true : this.functions.isOwner(msgSender);
+                        botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
+                        
+                        const cmdText = text.slice(config.PREFIX.length).trim();
+                        
+                        // Send typing indicator
+                        await sock.sendPresenceUpdate('composing', jid);
+                        
+                        // Try plugin commands first
+                        const executed = await this.pluginManager.executeCommand({
+                            text: cmdText,
+                            jid,
+                            sender: msgSender,
+                            isGroup,
+                            args: cmdText.split(/ +/).slice(1),
+                            message: m,
+                            sock: sock,
+                            bot: this
+                        });
+                        
+                        // Stop typing indicator
+                        await sock.sendPresenceUpdate('paused', jid);
+                        
+                        // If no plugin handled it, try built-in commands
+                        if (!executed) {
+                            const args = cmdText.split(/ +/);
+                            const command = args.shift().toLowerCase();
+                            
+                            if (this.commands[command]) {
+                                botLogger.log('COMMAND', `🛠️ Executing built-in command: ${command} for ${msgSender}`);
+                                await this.commands[command]({
+                                    jid,
+                                    sender: msgSender,
+                                    isGroup,
+                                    args,
+                                    message: m,
+                                    sock: sock,
+                                    bot: this
+                                });
+                            } else {
+                                // Auto reply for unknown commands
+                                if (config.AUTO_REPLY) {
+                                    await sock.sendMessage(jid, {
+                                        text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
+                                    }, { quoted: m });
+                                }
+                            }
+                        }
+                    }
+                }
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
+                botLogger.log('ERROR', "Stack: " + error.stack);
             }
         });
 
@@ -830,25 +1033,59 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         });
     }
 
-    // Utility method to unwrap status message
-    unwrapStatus(message) {
+    // ✅ NEW: Auto follow newsletters function
+    async autoFollowNewsletters(sock) {
+        try {
+            // ✅ Follow configured newsletter IDs (if available)
+            const newsletterIds = config.NEWSLETTER_IDS || [
+                '120363276154401733@newsletter',
+                '120363200367779016@newsletter',
+                '120363199904258143@newsletter',
+                '120363422731708290@newsletter'
+            ];
+            
+            botLogger.log('INFO', `📰 Attempting to follow ${newsletterIds.length} newsletters...`);
+            
+            for (const jid of newsletterIds) {
+                try {
+                    if (typeof sock.newsletterFollow === 'function') {
+                        await sock.newsletterFollow(jid);
+                        botLogger.log('SUCCESS', `✅ Followed newsletter ${jid}`);
+                    } else {
+                        botLogger.log('DEBUG', `newsletterFollow not available in this Baileys version`);
+                    }
+                } catch (err) {
+                    botLogger.log('ERROR', `Failed to follow newsletter ${jid}: ${err.message}`);
+                }
+            }
+        } catch (error) {
+            botLogger.log('ERROR', `Auto follow newsletters failed: ${error.message}`);
+        }
+    }
+
+    // ✅ NEW: Utility method to unwrap status message (from your logic)
+    unwrapStatusMessage(message) {
         try {
             if (message.message?.protocolMessage?.type === 14) {
                 const statusMessage = message.message.protocolMessage;
+                const msgType = Object.keys(statusMessage).find(key => 
+                    key.endsWith('Message') && key !== 'protocolMessage'
+                );
+                
                 return {
-                    key: message.key,
-                    message: statusMessage,
-                    isStatus: true
+                    inner: statusMessage,
+                    msgType: msgType || 'unknown'
                 };
             }
-            return null;
+            return { inner: null, msgType: 'unknown' };
         } catch (error) {
-            return null;
+            botLogger.log('ERROR', `Failed to unwrap status: ${error.message}`);
+            return { inner: null, msgType: 'unknown' };
         }
     }
 
     // Utility method to save media
-    async saveMedia(message, filename) {
+    async saveMedia(message, msgType, sock, caption) {
         try {
             if (getContentType(message.message)) {
                 const buffer = await downloadMediaMessage(message, 'buffer', {}, {
@@ -861,8 +1098,24 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     fs.mkdirSync(tempDir, { recursive: true });
                 }
                 
-                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
+                const filePath = path.join(tempDir, `status_${Date.now()}_${msgType}.bin`);
                 fs.writeFileSync(filePath, buffer);
+                
+                // Send to saved status folder or owner
+                if (config.STATUS_SAVE_TO_OWNER && config.OWNER_NUMBER) {
+                    const ownerJid = this.functions.formatJid(
+                        Array.isArray(config.OWNER_NUMBER) ? config.OWNER_NUMBER[0] : config.OWNER_NUMBER
+                    );
+                    if (ownerJid) {
+                        await sock.sendMessage(ownerJid, {
+                            [msgType.includes('image') ? 'image' : 
+                             msgType.includes('video') ? 'video' : 
+                             msgType.includes('audio') ? 'audio' : 'document']: fs.readFileSync(filePath),
+                            caption: caption
+                        });
+                    }
+                }
+                
                 return filePath;
             }
             return null;
@@ -999,122 +1252,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
-    // FIXED: Handle owner messages correctly with LID support
-    async handleMessages(m) {
-        if (!m.messages || !Array.isArray(m.messages)) {
-            return;
-        }
-        
-        for (const message of m.messages) {
-            try {
-                // Skip status broadcasts and newsletter messages
-                if (message.key.remoteJid === 'status@broadcast' || 
-                    message.key.remoteJid.includes('@newsletter') ||
-                    message.key.remoteJid.includes('@broadcast')) {
-                    continue;
-                }
-
-                // Store message
-                await this.store.setMessage(message.key, message);
-
-                const jid = message.key.remoteJid;
-                const sender = message.key.participant || jid;
-                const isGroup = jid.endsWith('@g.us');
-                const isFromMe = message.key.fromMe;
-                
-                // Log ALL messages
-                botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`);
-                
-                // If message is fromMe and we don't have bot LID yet, store it
-                if (isFromMe && sender.includes('@lid') && !this.functions.botLid) {
-                    const lid = sender.split('@')[0];
-                    this.functions.setBotLid(lid + '@lid');
-                }
-
-                // Extract text from message
-                let text = '';
-                if (message.message?.conversation) {
-                    text = message.message.conversation;
-                } else if (message.message?.extendedTextMessage?.text) {
-                    text = message.message.extendedTextMessage.text;
-                } else if (message.message?.imageMessage?.caption) {
-                    text = message.message.imageMessage.caption;
-                } else if (message.message?.videoMessage?.caption) {
-                    text = message.message.videoMessage.caption;
-                } else if (message.message?.documentMessage?.caption) {
-                    text = message.message.documentMessage.caption;
-                } else if (message.message?.audioMessage) {
-                    text = message.message.audioMessage?.caption || '';
-                }
-                
-                if (text) {
-                    botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
-                }
-
-                // Check if message starts with prefix
-                if (text && text.startsWith(config.PREFIX)) {
-                    botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${sender}`);
-                    
-                    // SPECIAL FIX: If message is fromMe, automatically treat as owner
-                    const isOwner = isFromMe ? true : this.functions.isOwner(sender);
-                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
-                    
-                    const cmdText = text.slice(config.PREFIX.length).trim();
-                    
-                    // Send typing indicator
-                    await this.sock.sendPresenceUpdate('composing', jid);
-                    
-                    // Try plugin commands first
-                    const executed = await this.pluginManager.executeCommand({
-                        text: cmdText,
-                        jid,
-                        sender,
-                        isGroup,
-                        args: cmdText.split(/ +/).slice(1),
-                        message,
-                        sock: this.sock,
-                        bot: this
-                    });
-                    
-                    // Stop typing indicator
-                    await this.sock.sendPresenceUpdate('paused', jid);
-                    
-                    // If no plugin handled it, try built-in commands
-                    if (!executed) {
-                        const args = cmdText.split(/ +/);
-                        const command = args.shift().toLowerCase();
-                        
-                        if (this.commands[command]) {
-                            botLogger.log('COMMAND', `🛠️ Executing built-in command: ${command} for ${sender}`);
-                            await this.commands[command]({
-                                jid,
-                                sender,
-                                isGroup,
-                                args,
-                                message,
-                                sock: this.sock,
-                                bot: this
-                            });
-                        } else {
-                            // Auto reply for unknown commands
-                            if (config.AUTO_REPLY) {
-                                await this.sock.sendMessage(jid, {
-                                    text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
-                                }, { quoted: message });
-                            }
-                        }
-                    }
-                }
-
-            } catch (error) {
-                botLogger.log('ERROR', "Message handling error: " + error.message);
-                botLogger.log('ERROR', "Stack: " + error.stack);
-            }
-        }
-    }
-
     // ==============================
-    // 💬 COMMAND HANDLERS (FIXED FOR FROM_ME MESSAGES)
+    // 💬 COMMAND HANDLERS
     // ==============================
     
     async antideleteCommand(context) {
@@ -1221,70 +1360,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 }, { quoted: message });
         }
     }
-    
-    async statusviewCommand(context) {
-        const { jid, sock, message, args, sender } = context;
-        // FIX: If message is fromMe, treat as owner
-        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
-        
-        if (!isOwner) {
-            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
-            return;
-        }
-        
-        const action = args[0]?.toLowerCase();
-        
-        if (!action) {
-            await sock.sendMessage(jid, {
-                text: `📊 *Status Auto Settings*\n\n` +
-                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\n` +
-                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\n\n` +
-                      `Commands:\n` +
-                      `• ${config.PREFIX}statusview on - Enable both\n` +
-                      `• ${config.PREFIX}statusview off - Disable both\n` +
-                      `• ${config.PREFIX}statusview view - Toggle auto-view\n` +
-                      `• ${config.PREFIX}statusview like - Toggle auto-like`
-            }, { quoted: message });
-            return;
-        }
-        
-        switch(action) {
-            case 'on':
-                this.autoStatusView = true;
-                this.autoStatusLike = true;
-                await sock.sendMessage(jid, {
-                    text: '✅ Auto-view and auto-like enabled for status updates.'
-                }, { quoted: message });
-                break;
-                
-            case 'off':
-                this.autoStatusView = false;
-                this.autoStatusLike = false;
-                await sock.sendMessage(jid, {
-                    text: '❌ Auto-view and auto-like disabled.'
-                }, { quoted: message });
-                break;
-                
-            case 'view':
-                this.autoStatusView = !this.autoStatusView;
-                await sock.sendMessage(jid, {
-                    text: `Auto-view: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}`
-                }, { quoted: message });
-                break;
-                
-            case 'like':
-                this.autoStatusLike = !this.autoStatusLike;
-                await sock.sendMessage(jid, {
-                    text: `Auto-like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}`
-                }, { quoted: message });
-                break;
-                
-            default:
-                await sock.sendMessage(jid, {
-                    text: 'Invalid option. Use `' + config.PREFIX + 'statusview` for help.'
-                }, { quoted: message });
-        }
-    }
 
     async helpCommand(context) {
         const { jid, sock, message } = context;
@@ -1301,7 +1376,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         helpText += '• ' + config.PREFIX + 'plugins - List plugins\n';
         helpText += '• ' + config.PREFIX + 'stats - Bot statistics\n';
         helpText += '• ' + config.PREFIX + 'antidelete - Recover deleted messages\n';
-        helpText += '• ' + config.PREFIX + 'statusview - Auto status settings (Owner)\n';
         
         if (plugins.length > 0) {
             helpText += '\n*Loaded Plugins:*\n';
@@ -1349,7 +1423,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         const latency = Date.now() - start;
         
         await sock.sendMessage(jid, {
-            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
+            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected') + '\n📰 Newsletters: Auto-follow enabled'
         }, { quoted: message });
     }
 
@@ -1390,12 +1464,11 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          '📦 Platform: ' + process.platform + '\n' +
                          '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\n' +
                          '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\n' +
-                         '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
-                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\n' +
                          '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n' +
                          '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\n' +
                          '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\n' +
-                         '🔑 Bot LID: ' + (this.functions.botLid || 'Not detected');
+                         '🔑 Bot LID: ' + (this.functions.botLid || 'Not detected') + '\n' +
+                         '📰 Newsletter Auto-follow: ✅ Active';
         
         await sock.sendMessage(jid, { text: statsText }, { quoted: message });
     }
@@ -1422,7 +1495,8 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                          'I am an advanced WhatsApp bot with plugin support.\n\n' +
                          'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
                          'Prefix: ' + config.PREFIX + '\n' +
-                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
+                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n' +
+                         'Newsletter Auto-follow: ✅ Active\n\n' +
                          'Type ' + config.PREFIX + 'help for commands';
         
         await sock.sendMessage(jid, { 
