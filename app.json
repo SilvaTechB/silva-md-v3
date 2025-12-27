@@ -19,7 +19,7 @@
       "required": true
     },
     "PREFIX": {
-      "description": "Bot command prefix (default: .)",
+      "description": "Bot command prefix",
       "value": ".",
       "required": false
     },
@@ -33,7 +33,7 @@
       "required": true
     },
     "CONNECTED_NUMBER": {
-      "description": "Bot's connected phone number (optional, auto-detected)",
+      "description": "Bot connected phone number (auto-detected)",
       "required": false
     },
     "BOT_MODE": {
@@ -46,8 +46,6 @@
       "value": "true",
       "required": false
     },
-    
-    // Status Settings
     "AUTO_STATUS_SEEN": {
       "description": "Automatically mark status as seen",
       "value": "true",
@@ -68,13 +66,13 @@
       "value": "✅ Status viewed by Silva MD",
       "required": false
     },
-    "STATUS_Saver": {
-      "description": "Save status updates (true/false)",
+    "STATUS_SAVER": {
+      "description": "Save status updates",
       "value": "true",
       "required": false
     },
     "STATUS_REPLY": {
-      "description": "Send reply after saving status",
+      "description": "Reply after saving status",
       "value": "true",
       "required": false
     },
@@ -84,21 +82,17 @@
       "required": false
     },
     "CUSTOM_REACT_EMOJIS": {
-      "description": "Custom emojis for status reactions (comma-separated)",
+      "description": "Custom emojis for status reactions",
       "value": "❤️,🔥,💯,😍,👏",
       "required": false
     },
-    
-    // Newsletter Settings
     "AUTO_REACT_NEWSLETTER": {
       "description": "Automatically react to newsletter messages",
       "value": "true",
       "required": false
     },
-    
-    // Anti-delete Settings
     "ANTIDELETE": {
-      "description": "Enable anti-delete feature",
+      "description": "Enable anti-delete",
       "value": "true",
       "required": false
     },
@@ -112,14 +106,10 @@
       "value": "true",
       "required": false
     },
-    
-    // AI Settings
     "OPENAI_API_KEY": {
       "description": "OpenAI API key for AI features",
       "required": false
     },
-    
-    // Other Settings
     "AUTO_READ": {
       "description": "Automatically mark messages as read",
       "value": "true",
@@ -135,10 +125,8 @@
       "value": "true",
       "required": false
     },
-    
-    // Allowed Users (for private mode)
     "ALLOWED_USERS": {
-      "description": "Allowed users for private mode (comma-separated numbers)",
+      "description": "Allowed users for private mode (comma-separated)",
       "required": false
     }
   },
