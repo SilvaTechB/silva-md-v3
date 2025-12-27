@@ -1,4 +1,4 @@
-// Menu plugin
+// Silva MD Bot Menu Plugin
 const config = require('../config')
 
 const handler = {
@@ -14,144 +14,73 @@ const handler = {
         try {
             const from = message.key.remoteJid
             const sender = message.key.participant || from
-            const pushname = message.pushName || 'there'
+            const pushname = message.pushName || 'User'
 
-            // Theme definitions
-            const themes = [
-                {
-                    name: 'NEON',
-                    border: '✦',
-                    header: '♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡♡',
-                    section: '▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰',
-                    emoji: {
-                        user: '👾', download: '💾', search: '🔍', main: '⚡',
-                        extra: '🛠️', group: '👥', ai: '🤖',
-                        convert: '🎙️', link: '🔗'
-                    }
-                },
-                {
-                    name: 'ROYAL',
-                    border: '♛',
-                    header: '♛♛♛♛♛♛♛♛♛♛♛♛♛♛♛♛♛♛♛♛♛',
-                    section: '▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬',
-                    emoji: {
-                        user: '👑', download: '📥', search: '🔎', main: '💎',
-                        extra: '✨', group: '🏰', ai: '🧠',
-                        convert: '🎵', link: '🏅'
-                    }
-                },
-                {
-                    name: 'COSMIC',
-                    border: '☄️',
-                    header: '☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️☄️',
-                    section: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                    emoji: {
-                        user: '🚀', download: '📡', search: '🔭', main: '🌌',
-                        extra: '🛸', group: '🌠', ai: '💫',
-                        convert: '🎧', link: '🪐'
-                    }
-                },
-                {
-                    name: 'NATURE',
-                    border: '🌿',
-                    header: '🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿',
-                    section: '──────────────────────────────',
-                    emoji: {
-                        user: '🌸', download: '🍃', search: '🔍', main: '🌺',
-                        extra: '🪴', group: '🌳', ai: '🧠',
-                        convert: '🎵', link: '🌻'
-                    }
-                },
-                {
-                    name: 'TECH',
-                    border: '⚡',
-                    header: '████████████████████████████████',
-                    section: '──────────────────────────────',
-                    emoji: {
-                        user: '💻', download: '📲', search: '🔎', main: '⚡',
-                        extra: '🔧', group: '👥', ai: '🤖',
-                        convert: '🎙️', link: '🔗'
-                    }
-                }
-            ]
-
-            const theme = themes[Math.floor(Math.random() * themes.length)]
-
-            const bannerImages = [
-                'https://files.catbox.moe/riwqjf.png',
-                'https://files.catbox.moe/riwqjf.png',
-                'https://files.catbox.moe/riwqjf.png'
-            ]
-
-            const bannerImage =
-                bannerImages[Math.floor(Math.random() * bannerImages.length)]
+            const bannerImage = 'https://files.catbox.moe/riwqjf.png'
 
             const menuText = `
-${theme.header}
-  ${theme.border}  *S I L V A T R I X • ${theme.name}*  ${theme.border}
-${theme.header}
+╭━━━━━━━━━━━━━━━━━━━━╮
+┃   sɪʟᴠᴀ ᴍᴅ ʙᴏᴛ    ┃
+┃  ᴠᴇʀsɪᴏɴ 2.1.0     ┃
+╰━━━━━━━━━━━━━━━━━━━━╯
 
-╭───────────────◉〔 ${theme.emoji.user} USER INFO 〕◈
-│ ▸ Name: ${pushname}
-│ ▸ Mode: PUBLIC
-│ ▸ Prefix: ${config.PREFIX}
-│ ▸ Version: 2.1.0
-╰──────────────◉
+┏━━━━━━━━━━━━━━━━━━━━┓
+┃ ᴜsᴇʀ: ${pushname}
+┃ ᴍᴏᴅᴇ: PUBLIC
+┃ ᴘʀᴇғɪx: ${config.PREFIX}
+┗━━━━━━━━━━━━━━━━━━━━┛
 
-${theme.section}
+┏─『 ᴅᴏᴡɴʟᴏᴀᴅ ᴍᴇɴᴜ 』──⊷
+│ ${config.PREFIX}song
+│ ${config.PREFIX}video
+│ ${config.PREFIX}tiktok
+│ ${config.PREFIX}fb
+│ ${config.PREFIX}apk
+│ ${config.PREFIX}img
+┗──────────────⊷
 
-╭───────────────◉〔 ${theme.emoji.download} DOWNLOAD 〕◈
-│ ▸ song [query]
-│ ▸ video [query]
-│ ▸ tiktok [url]
-│ ▸ fb [url]
-│ ▸ apk [name]
-│ ▸ img [query]
-╰──────────────◉
+┏─『 sᴇᴀʀᴄʜ ᴍᴇɴᴜ 』──⊷
+│ ${config.PREFIX}yts
+│ ${config.PREFIX}lyrics
+┗──────────────⊷
 
-╭───────────────◉〔 ${theme.emoji.search} SEARCH 〕◈
-│ ▸ yts [movie]
-│ ▸ lyrics [song]
-╰──────────────◉
+┏─『 ᴍᴀɪɴ ᴍᴇɴᴜ 』──⊷
+│ ${config.PREFIX}alive
+│ ${config.PREFIX}ping
+│ ${config.PREFIX}uptime
+│ ${config.PREFIX}system
+│ ${config.PREFIX}help
+│ ${config.PREFIX}owner
+┗──────────────⊷
 
-╭───────────────◉〔 ${theme.emoji.main} MAIN 〕◈
-│ ▸ alive
-│ ▸ ping
-│ ▸ uptime
-│ ▸ system
-│ ▸ help
-│ ▸ owner
-╰──────────────◉
+┏─『 ᴜᴛɪʟɪᴛʏ ᴍᴇɴᴜ 』──⊷
+│ ${config.PREFIX}vv
+│ ${config.PREFIX}delete
+┗──────────────⊷
 
-╭───────────────◉〔 ${theme.emoji.extra} EXTRA 〕◈
-│ ▸ vv
-│ ▸ delete
-╰──────────────◉
+┏─『 ɢʀᴏᴜᴘ ᴍᴇɴᴜ 』──⊷
+│ ${config.PREFIX}hidetag
+│ ${config.PREFIX}delete
+│ ${config.PREFIX}mute
+│ ${config.PREFIX}unmute
+┗──────────────⊷
 
-╭───────────────◉〔 ${theme.emoji.group} GROUP 〕◈
-│ ▸ hidetag [text]
-│ ▸ delete [reply]
-│ ▸ mute / unmute
-╰───────────────◉
+┏─『 ᴀɪ ᴍᴇɴᴜ 』──⊷
+│ ${config.PREFIX}ai
+│ ${config.PREFIX}gpt
+┗──────────────⊷
 
-╭───────────────◉〔 ${theme.emoji.ai} AI 〕◈
-│ ▸ ai [query]
-│ ▸ gpt [query]
-╰──────────────◉
+┏─『 ᴄᴏɴᴠᴇʀᴛ ᴍᴇɴᴜ 』──⊷
+│ ${config.PREFIX}tts
+┗──────────────⊷
 
-╭───────────────◉〔 ${theme.emoji.convert} CONVERT 〕◈
-│ ▸ tts [text]
-╰──────────────◉
+╭━━━━━━━━━━━━━━━━━━━━╮
+┃ ᴅᴇᴠᴇʟᴏᴘᴇʀ ɪɴғᴏ    ┃
+╰━━━━━━━━━━━━━━━━━━━━╯
+github.com/SilvaTechB
+pay.silvatech.top
 
-${theme.section}
-
-╭───────────────◉〔 ${theme.emoji.link} LINKS 〕◈
-│ ▸ Developer: https://github.com/SilvaTechB
-│ ▸ Support: https://pay.silvatech.top
-╰──────────────◉
-
-🎨 Theme: ${theme.name} • Auto-refresh
-✨ Silvatrix — engineered, not improvised
+ᴘᴏᴡᴇʀᴇᴅ ʙʏ sɪʟᴠᴀ ᴍᴅ
 `
 
             const menuMessage = {
@@ -163,23 +92,23 @@ ${theme.section}
                     isForwarded: true,
                     forwardedNewsletterMessageInfo: {
                         newsletterJid: '120363200367779016@newsletter',
-                        newsletterName: `SILVA • ${theme.name}`,
+                        newsletterName: 'SILVATRIX',
                         serverMessageId: Math.floor(Math.random() * 1000)
                     }
                 }
             }
 
-            // DM user
+            // Send to user's DM
             await sock.sendMessage(sender, menuMessage, { quoted: message })
 
-            // Also send to group if used there
+            // Also send to group if command used there
             if (from.endsWith('@g.us')) {
                 await sock.sendMessage(from, menuMessage)
             }
 
         } catch (err) {
             await sock.sendMessage(jid, {
-                text: `❌ Menu error:\n${err.message}`
+                text: `❌ Error loading menu:\n${err.message}`
             }, { quoted: message })
         }
     }
