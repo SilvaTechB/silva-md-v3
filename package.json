@@ -24,6 +24,7 @@
   "dependencies": {
     "@whiskeysockets/baileys": "github:WhiskeySockets/Baileys",
     "@hapi/boom": "^10.0.1",
+    "api-dylux": "^1.8.3",
     "jimp": "^1.6.0",
     "sharp": "0.32.6",
     "axios": "^1.6.2",
@@ -39,6 +40,7 @@
     "cheerio": "^1.0.0-rc.12",
     "fluent-ffmpeg": "^2.1.2",
     "form-data": "^4.0.0",
+    "ruhend-scraper": "^8.0.3",
     "link-preview-js": "^3.0.5",
     "ytdl-core": "^4.11.5",
     "yt-search": "^2.10.4",
