@@ -6,9 +6,9 @@ const axios = require('axios')
 const handler = {
     help: ['archive', 'unarchive', 'mute', 'unmute', 'pin', 'unpin', 'markread', 'markunread', 
            'setbio', 'setname', 'setpp', 'removepp', 'checknum', 'fetchstatus', 'getpp', 
-           'disappear', 'block', 'unblock'],
+           'disappear'],
     tags: ['chat', 'moderation'],
-    command: /^(archive|unarchive|mute|unmute|pin|unpin|markread|markunread|setbio|setname|setpp|removepp|checknum|fetchstatus|getpp|disappear|block|unblock)$/i,
+    command: /^(archive|unarchive|mute|unmute|pin|unpin|markread|markunread|setbio|setname|setpp|removepp|checknum|fetchstatus|getpp|disappear)$/i,
     group: false,
     admin: false,
     botAdmin: true,
@@ -27,13 +27,18 @@ const handler = {
                 // ========================================
                 case 'archive':
                     try {
+                        // Try without lastMessages first
                         await sock.chatModify({ archive: true }, jid)
                         await sock.sendMessage(jid, {
                             text: '📦 Chat archived successfully!',
                             contextInfo: createContext(sender, 'SILVA MD • CHAT')
                         }, { quoted: message })
                     } catch (error) {
-                        throw new Error(`Failed to archive: ${error.message}`)
+                        // If it fails, provide helpful message
+                        await sock.sendMessage(jid, {
+                            text: `⚠️ Archive feature not available\n\nThis might be because:\n• App state not fully synced\n• Feature not supported in this chat\n\nError: ${error.message}`,
+                            contextInfo: createContext(sender, 'SILVA MD • CHAT')
+                        }, { quoted: message })
                     }
                     break
 
@@ -72,7 +77,10 @@ const handler = {
                             contextInfo: createContext(sender, 'SILVA MD • CHAT')
                         }, { quoted: message })
                     } catch (error) {
-                        throw new Error(`Failed to mute: ${error.message}`)
+                        await sock.sendMessage(jid, {
+                            text: `⚠️ Mute feature not available\n\nYou can manually mute this chat from WhatsApp settings.\n\nError: ${error.message}`,
+                            contextInfo: createContext(sender, 'SILVA MD • CHAT')
+                        }, { quoted: message })
                     }
                     break
 
@@ -102,7 +110,10 @@ const handler = {
                             contextInfo: createContext(sender, 'SILVA MD • CHAT')
                         }, { quoted: message })
                     } catch (error) {
-                        throw new Error(`Failed to pin: ${error.message}`)
+                        await sock.sendMessage(jid, {
+                            text: `⚠️ Pin feature not available\n\nYou can manually pin this chat from WhatsApp.\n\nError: ${error.message}`,
+                            contextInfo: createContext(sender, 'SILVA MD • CHAT')
+                        }, { quoted: message })
                     }
                     break
 
@@ -324,13 +335,17 @@ ${config.PREFIX}checknum 254700000000`,
                     
                     try {
                         const status = await sock.fetchStatus(targetNum)
+                        const statusText = typeof status === 'string' ? status : 
+                                         status?.status || 
+                                         'No status set'
+                        
                         await sock.sendMessage(jid, {
                             text: `┏━━━━━━━━━━━━━━━━━━━━┓
 ┃   sᴛᴀᴛᴜs ɪɴғᴏ      ┃
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 📱 Number: ${targetNum.split('@')[0]}
-💬 Status: ${status || 'No status set'}`,
+💬 Status: ${statusText}`,
                             contextInfo: createContext(sender, 'SILVA MD • TOOLS')
                         }, { quoted: message })
                     } catch (error) {
