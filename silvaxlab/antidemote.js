@@ -13,7 +13,7 @@ const handler = {
     tags: ['group', 'admin'],
     command: /^(antidemote|protect|unprotect|protected)$/i,
     group: true,
-    admin: false,
+    admin: true,
     botAdmin: true,
     owner: false,
 
