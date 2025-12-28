@@ -13,8 +13,8 @@ const handler = {
     tags: ['group', 'admin'],
     command: /^(antidemote|protect|unprotect|protected)$/i,
     group: true,
-    admin: true,
-    botAdmin: true,
+    admin: false,
+    botAdmin: false, // Changed to false - we'll check manually
     owner: false,
 
     // Auto-register event listener on first command use
@@ -32,6 +32,42 @@ const handler = {
         if (!eventListenerRegistered) {
             registerEventListener(sock)
             eventListenerRegistered = true
+        }
+        
+        // Manual bot admin check
+        try {
+            const metadata = await sock.groupMetadata(jid)
+            const botNumber = sock.user.id.split(':')[0]
+            const botJid = botNumber + '@s.whatsapp.net'
+            
+            const botParticipant = metadata.participants.find(p => 
+                p.id === botJid || 
+                p.id.split('@')[0] === botNumber ||
+                p.id.includes(botNumber)
+            )
+            
+            const isBotAdmin = botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin')
+            
+            if (!isBotAdmin) {
+                return sock.sendMessage(jid, {
+                    text: `┏━━━━━━━━━━━━━━━━━━━━┓
+┃   ʙᴏᴛ ɴᴏᴛ ᴀᴅᴍɪɴ    ┃
+┗━━━━━━━━━━━━━━━━━━━━┛
+
+❌ Bot needs admin privileges to use anti-demote protection
+
+📋 Current Status:
+• Bot: @${botNumber}
+• Is Admin: ${isBotAdmin ? 'Yes' : 'No'}
+• Permission: ${botParticipant?.admin || 'None'}
+
+💡 Make bot admin first, then try again`,
+                    mentions: [botJid],
+                    contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
+                }, { quoted: message })
+            }
+        } catch (error) {
+            console.error('[ANTIDEMOTE] Bot admin check failed:', error)
         }
         const cmd = message.message?.conversation || 
                    message.message?.extendedTextMessage?.text || ''
