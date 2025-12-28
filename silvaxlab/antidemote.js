@@ -34,17 +34,41 @@ const handler = {
             eventListenerRegistered = true
         }
         
-        // Manual bot admin check
+        // Manual bot admin check with multiple JID formats
         try {
             const metadata = await sock.groupMetadata(jid)
-            const botNumber = sock.user.id.split(':')[0]
-            const botJid = botNumber + '@s.whatsapp.net'
+            const botNumber = sock.user.id.split(':')[0].replace(/[^0-9]/g, '')
             
-            const botParticipant = metadata.participants.find(p => 
-                p.id === botJid || 
-                p.id.split('@')[0] === botNumber ||
-                p.id.includes(botNumber)
-            )
+            // Try multiple possible JID formats
+            const possibleBotJids = [
+                botNumber + '@s.whatsapp.net',
+                sock.user.id.split(':')[0] + '@s.whatsapp.net',
+                sock.user.id
+            ]
+            
+            // Also check LID format if available
+            if (sock.user.id.includes(':')) {
+                const lid = sock.user.id.split(':')[1]
+                if (lid) {
+                    possibleBotJids.push(lid + '@lid')
+                }
+            }
+            
+            console.log('[ANTIDEMOTE] Checking bot admin status...')
+            console.log('[ANTIDEMOTE] Bot user ID:', sock.user.id)
+            console.log('[ANTIDEMOTE] Bot number:', botNumber)
+            console.log('[ANTIDEMOTE] Possible JIDs:', possibleBotJids)
+            
+            // Find bot in participants
+            const botParticipant = metadata.participants.find(p => {
+                const participantNumber = p.id.split('@')[0].replace(/[^0-9]/g, '')
+                console.log('[ANTIDEMOTE] Checking participant:', p.id, 'Number:', participantNumber, 'Admin:', p.admin)
+                
+                // Check if numbers match
+                return participantNumber === botNumber || possibleBotJids.includes(p.id)
+            })
+            
+            console.log('[ANTIDEMOTE] Found bot participant:', botParticipant?.id, 'Admin:', botParticipant?.admin)
             
             const isBotAdmin = botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin')
             
@@ -56,18 +80,23 @@ const handler = {
 
 ❌ Bot needs admin privileges to use anti-demote protection
 
-📋 Current Status:
-• Bot: @${botNumber}
+📋 Debug Info:
+• Bot User ID: ${sock.user.id}
+• Bot Number: ${botNumber}
+• Found in group: ${botParticipant ? 'Yes' : 'No'}
+• Participant ID: ${botParticipant?.id || 'Not found'}
 • Is Admin: ${isBotAdmin ? 'Yes' : 'No'}
-• Permission: ${botParticipant?.admin || 'None'}
+• Admin Level: ${botParticipant?.admin || 'None'}
 
-💡 Make bot admin first, then try again`,
-                    mentions: [botJid],
+💡 Please check console logs for detailed debug info
+💡 Try promoting bot again or contact owner`,
+                    mentions: possibleBotJids.filter(jid => jid.includes('@')),
                     contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                 }, { quoted: message })
             }
         } catch (error) {
             console.error('[ANTIDEMOTE] Bot admin check failed:', error)
+            // Continue anyway - user might be testing
         }
         const cmd = message.message?.conversation || 
                    message.message?.extendedTextMessage?.text || ''
