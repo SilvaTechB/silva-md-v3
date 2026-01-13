@@ -14,7 +14,7 @@ const handler = {
     command: /^(antidemote|protect|unprotect|protected)$/i,
     group: true,
     admin: false,
-    botAdmin: false, // Changed to false - we'll check manually
+    botAdmin: false, // manual check
     owner: false,
 
     // Auto-register event listener on first command use
@@ -27,51 +27,25 @@ const handler = {
 
     execute: async ({ jid, sock, message, args }) => {
         const sender = message.key.participant || message.key.remoteJid
-        
-        // Auto-register event listener on first use
+
+        // Ensure listener is registered
         if (!eventListenerRegistered) {
             registerEventListener(sock)
             eventListenerRegistered = true
         }
-        
-        // Manual bot admin check with multiple JID formats
+
+        // =================================================
+        // ✅ RELIABLE BOT ADMIN CHECK (FIXED)
+        // =================================================
         try {
             const metadata = await sock.groupMetadata(jid)
-            const botNumber = sock.user.id.split(':')[0].replace(/[^0-9]/g, '')
-            
-            // Try multiple possible JID formats
-            const possibleBotJids = [
-                botNumber + '@s.whatsapp.net',
-                sock.user.id.split(':')[0] + '@s.whatsapp.net',
-                sock.user.id
-            ]
-            
-            // Also check LID format if available
-            if (sock.user.id.includes(':')) {
-                const lid = sock.user.id.split(':')[1]
-                if (lid) {
-                    possibleBotJids.push(lid + '@lid')
-                }
-            }
-            
-            console.log('[ANTIDEMOTE] Checking bot admin status...')
-            console.log('[ANTIDEMOTE] Bot user ID:', sock.user.id)
-            console.log('[ANTIDEMOTE] Bot number:', botNumber)
-            console.log('[ANTIDEMOTE] Possible JIDs:', possibleBotJids)
-            
-            // Find bot in participants
-            const botParticipant = metadata.participants.find(p => {
-                const participantNumber = p.id.split('@')[0].replace(/[^0-9]/g, '')
-                console.log('[ANTIDEMOTE] Checking participant:', p.id, 'Number:', participantNumber, 'Admin:', p.admin)
-                
-                // Check if numbers match
-                return participantNumber === botNumber || possibleBotJids.includes(p.id)
-            })
-            
-            console.log('[ANTIDEMOTE] Found bot participant:', botParticipant?.id, 'Admin:', botParticipant?.admin)
-            
-            const isBotAdmin = botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin')
-            
+            const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net'
+
+            const isBotAdmin = metadata.participants.some(p =>
+                (p.id === botJid || p.phoneNumber === botJid) &&
+                (p.admin === 'admin' || p.admin === 'superadmin')
+            )
+
             if (!isBotAdmin) {
                 return sock.sendMessage(jid, {
                     text: `┏━━━━━━━━━━━━━━━━━━━━┓
@@ -80,30 +54,25 @@ const handler = {
 
 ❌ Bot needs admin privileges to use anti-demote protection
 
-📋 Debug Info:
-• Bot User ID: ${sock.user.id}
-• Bot Number: ${botNumber}
-• Found in group: ${botParticipant ? 'Yes' : 'No'}
-• Participant ID: ${botParticipant?.id || 'Not found'}
-• Is Admin: ${isBotAdmin ? 'Yes' : 'No'}
-• Admin Level: ${botParticipant?.admin || 'None'}
-
-💡 Please check console logs for detailed debug info
-💡 Try promoting bot again or contact owner`,
-                    mentions: possibleBotJids.filter(jid => jid.includes('@')),
+💡 Please promote the bot to admin and try again`,
                     contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                 }, { quoted: message })
             }
+
         } catch (error) {
             console.error('[ANTIDEMOTE] Bot admin check failed:', error)
-            // Continue anyway - user might be testing
         }
-        const cmd = message.message?.conversation || 
-                   message.message?.extendedTextMessage?.text || ''
-        const command = cmd.split(' ')[0].replace(config.PREFIX, '').toLowerCase()
+
+        const cmd =
+            message.message?.conversation ||
+            message.message?.extendedTextMessage?.text ||
+            ''
+
+        const command = cmd.split(' ')[0]
+            .replace(config.PREFIX, '')
+            .toLowerCase()
 
         try {
-            // Get group protected users
             if (!protectedUsers.has(jid)) {
                 protectedUsers.set(jid, {
                     enabled: false,
@@ -113,11 +82,12 @@ const handler = {
 
             const groupProtection = protectedUsers.get(jid)
 
-            switch(command) {
+            switch (command) {
+
                 // ========================================
                 // TOGGLE ANTI-DEMOTE
                 // ========================================
-                case 'antidemote':
+                case 'antidemote': {
                     const action = args[0]?.toLowerCase()
 
                     if (!action || !['on', 'off', 'enable', 'disable'].includes(action)) {
@@ -130,214 +100,105 @@ const handler = {
 🛡️ Protected Users: ${groupProtection.users.length}
 
 ᴜsᴀɢᴇ:
-${config.PREFIX}antidemote on/off
-
-ᴄᴏᴍᴍᴀɴᴅs:
-• ${config.PREFIX}antidemote on - Enable protection
-• ${config.PREFIX}antidemote off - Disable protection
-• ${config.PREFIX}protect @user - Add user to protection
-• ${config.PREFIX}unprotect @user - Remove protection
-• ${config.PREFIX}protected - List protected users
-
-💡 When enabled, if someone tries to demote a protected admin:
-  1. The demoted user is re-promoted
-  2. The attacker is demoted
-  3. Owner & sudo users are immune`,
+${config.PREFIX}antidemote on/off`,
                             contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                         }, { quoted: message })
                     }
 
-                    if (action === 'on' || action === 'enable') {
-                        groupProtection.enabled = true
-                        await sock.sendMessage(jid, {
-                            text: `✅ Anti-Demote Protection ENABLED!
+                    groupProtection.enabled = action === 'on' || action === 'enable'
 
-🛡️ Protected users will be automatically re-promoted
-⚔️ Attackers will be demoted
-🔒 Protected users: ${groupProtection.users.length}
-
-💡 Add users with: ${config.PREFIX}protect @user`,
-                            contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
-                        }, { quoted: message })
-                    } else {
-                        groupProtection.enabled = false
-                        await sock.sendMessage(jid, {
-                            text: `❌ Anti-Demote Protection DISABLED
-
-⚠️ Protected users can now be demoted normally
-📋 Protected list still saved: ${groupProtection.users.length} users
-
-💡 Enable again with: ${config.PREFIX}antidemote on`,
-                            contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
-                        }, { quoted: message })
-                    }
+                    await sock.sendMessage(jid, {
+                        text: groupProtection.enabled
+                            ? `✅ Anti-Demote Protection ENABLED`
+                            : `❌ Anti-Demote Protection DISABLED`,
+                        contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
+                    }, { quoted: message })
                     break
+                }
 
                 // ========================================
                 // PROTECT USER
                 // ========================================
-                case 'protect':
-                    const mentions1 = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
-                    
-                    if (mentions1.length === 0) {
+                case 'protect': {
+                    const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
+
+                    if (!mentions.length) {
                         return sock.sendMessage(jid, {
-                            text: `┏━━━━━━━━━━━━━━━━━━━━┓
-┃   ᴘʀᴏᴛᴇᴄᴛ ᴜsᴇʀ     ┃
-┗━━━━━━━━━━━━━━━━━━━━┛
-
-ᴜsᴀɢᴇ:
-${config.PREFIX}protect @user @user2...
-
-💡 Tag users to add to protection list
-🛡️ Protected users cannot be demoted`,
+                            text: `Usage:\n${config.PREFIX}protect @user`,
                             contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                         }, { quoted: message })
                     }
 
                     let added = 0
-                    let alreadyProtected = 0
-
-                    for (const userJid of mentions1) {
-                        const cleanUser = userJid.split('@')[0]
-                        
-                        if (groupProtection.users.includes(cleanUser)) {
-                            alreadyProtected++
-                        } else {
-                            groupProtection.users.push(cleanUser)
+                    for (const jid of mentions) {
+                        const user = jid.split('@')[0]
+                        if (!groupProtection.users.includes(user)) {
+                            groupProtection.users.push(user)
                             added++
                         }
                     }
 
-                    let responseText = `✅ Protection Updated!\n\n`
-                    if (added > 0) {
-                        responseText += `🛡️ Added ${added} user(s) to protection\n`
-                    }
-                    if (alreadyProtected > 0) {
-                        responseText += `⚠️ ${alreadyProtected} user(s) already protected\n`
-                    }
-                    responseText += `\n📊 Total Protected: ${groupProtection.users.length}`
-                    responseText += `\n🔒 Anti-Demote: ${groupProtection.enabled ? '✅ ENABLED' : '❌ DISABLED'}`
-
                     await sock.sendMessage(jid, {
-                        text: responseText,
-                        mentions: mentions1,
+                        text: `🛡️ Added ${added} user(s) to protection`,
+                        mentions,
                         contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                     }, { quoted: message })
                     break
+                }
 
                 // ========================================
                 // UNPROTECT USER
                 // ========================================
-                case 'unprotect':
-                    const mentions2 = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
-                    
-                    if (mentions2.length === 0) {
-                        return sock.sendMessage(jid, {
-                            text: `┏━━━━━━━━━━━━━━━━━━━━┓
-┃   ᴜɴᴘʀᴏᴛᴇᴄᴛ ᴜsᴇʀ   ┃
-┗━━━━━━━━━━━━━━━━━━━━┛
-
-ᴜsᴀɢᴇ:
-${config.PREFIX}unprotect @user @user2...
-
-💡 Tag users to remove from protection`,
-                            contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
-                        }, { quoted: message })
-                    }
+                case 'unprotect': {
+                    const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
 
                     let removed = 0
-                    let notProtected = 0
-
-                    for (const userJid of mentions2) {
-                        const cleanUser = userJid.split('@')[0]
-                        const index = groupProtection.users.indexOf(cleanUser)
-                        
+                    for (const jid of mentions) {
+                        const user = jid.split('@')[0]
+                        const index = groupProtection.users.indexOf(user)
                         if (index !== -1) {
                             groupProtection.users.splice(index, 1)
                             removed++
-                        } else {
-                            notProtected++
                         }
                     }
 
-                    let responseText2 = `✅ Protection Updated!\n\n`
-                    if (removed > 0) {
-                        responseText2 += `🔓 Removed ${removed} user(s) from protection\n`
-                    }
-                    if (notProtected > 0) {
-                        responseText2 += `⚠️ ${notProtected} user(s) were not protected\n`
-                    }
-                    responseText2 += `\n📊 Total Protected: ${groupProtection.users.length}`
-
                     await sock.sendMessage(jid, {
-                        text: responseText2,
-                        mentions: mentions2,
+                        text: `🔓 Removed ${removed} user(s) from protection`,
+                        mentions,
                         contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                     }, { quoted: message })
                     break
+                }
 
                 // ========================================
                 // LIST PROTECTED USERS
                 // ========================================
-                case 'protected':
-                    if (groupProtection.users.length === 0) {
+                case 'protected': {
+                    if (!groupProtection.users.length) {
                         return sock.sendMessage(jid, {
-                            text: `┏━━━━━━━━━━━━━━━━━━━━┓
-┃   ᴘʀᴏᴛᴇᴄᴛᴇᴅ ᴜsᴇʀs  ┃
-┗━━━━━━━━━━━━━━━━━━━━┛
-
-❌ No protected users
-
-💡 Add users with:
-${config.PREFIX}protect @user
-
-🔒 Status: ${groupProtection.enabled ? 'ENABLED' : 'DISABLED'}`,
+                            text: `❌ No protected users`,
                             contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                         }, { quoted: message })
                     }
 
-                    let protectedText = `┏━━━━━━━━━━━━━━━━━━━━┓
-┃   ᴘʀᴏᴛᴇᴄᴛᴇᴅ ᴜsᴇʀs  ┃
-┗━━━━━━━━━━━━━━━━━━━━┛
-
-🛡️ Total: ${groupProtection.users.length}
-🔒 Status: ${groupProtection.enabled ? '✅ ENABLED' : '❌ DISABLED'}\n\n`
-
-                    const protectedJids = []
-                    groupProtection.users.forEach((user, i) => {
-                        const userJid = user + '@s.whatsapp.net'
-                        protectedJids.push(userJid)
-                        protectedText += `${i + 1}. @${user}\n`
-                    })
-
-                    protectedText += `\n💡 Manage with:
-• ${config.PREFIX}protect @user - Add
-• ${config.PREFIX}unprotect @user - Remove
-• ${config.PREFIX}antidemote on/off - Toggle`
+                    const mentions = groupProtection.users.map(u => u + '@s.whatsapp.net')
+                    const list = groupProtection.users
+                        .map((u, i) => `${i + 1}. @${u}`)
+                        .join('\n')
 
                     await sock.sendMessage(jid, {
-                        text: protectedText,
-                        mentions: protectedJids,
+                        text: `🛡️ Protected Users:\n\n${list}`,
+                        mentions,
                         contextInfo: createContext(sender, 'SILVA MD • ANTIDEMOTE')
                     }, { quoted: message })
                     break
-
-                default:
-                    await sock.sendMessage(jid, {
-                        text: '❌ Unknown command',
-                        contextInfo: createContext(sender, 'SILVA MD • ERROR')
-                    }, { quoted: message })
+                }
             }
 
-        } catch (error) {
+        } catch (err) {
+            console.error('[ANTIDEMOTE] Error:', err)
             await sock.sendMessage(jid, {
-                text: `┏━━━━━━━━━━━━━━━━━━━━┓
-┃   ᴇʀʀᴏʀ            ┃
-┗━━━━━━━━━━━━━━━━━━━━┛
-
-❌ ${error.message}
-
-💡 Make sure bot has admin rights`,
+                text: `❌ Error: ${err.message}`,
                 contextInfo: createContext(sender, 'SILVA MD • ERROR')
             }, { quoted: message })
         }
@@ -345,110 +206,50 @@ ${config.PREFIX}protect @user
 }
 
 // ========================================
-// AUTO-REGISTER EVENT LISTENER (NO SILVA.JS EDIT NEEDED!)
+// AUTO-REGISTER EVENT LISTENER
 // ========================================
 function registerEventListener(sock) {
-    console.log('[ANTIDEMOTE] Registering event listener...')
-    
-    sock.ev.on('group-participants.update', async (update) => {
-        await handleGroupUpdate(update, sock)
-    })
-    
-    console.log('[ANTIDEMOTE] ✅ Event listener registered!')
+    if (!sock?.ev) return
+    sock.ev.on('group-participants.update', update =>
+        handleGroupUpdate(update, sock)
+    )
 }
 
 // ========================================
-// EVENT HANDLER FOR GROUP PARTICIPANT UPDATES
+// HANDLE DEMOTE EVENTS
 // ========================================
 async function handleGroupUpdate(update, sock) {
-    try {
-        const { id: groupJid, participants, action, author } = update
+    const { id, participants, action, author } = update
+    if (action !== 'demote') return
 
-        // Only handle demote actions
-        if (action !== 'demote') return
+    const protection = protectedUsers.get(id)
+    if (!protection?.enabled) return
 
-        // Check if anti-demote is enabled for this group
-        const groupProtection = protectedUsers.get(groupJid)
-        if (!groupProtection || !groupProtection.enabled) return
+    const { isOwner, isSudo } = require('../lib/permissions')
+    if (isOwner(author) || isSudo(author)) return
 
-        console.log(`[ANTIDEMOTE] Demote detected in ${groupJid}`)
-        console.log(`[ANTIDEMOTE] Action by: ${author}`)
-        console.log(`[ANTIDEMOTE] Victims: ${participants.join(', ')}`)
+    for (const victim of participants) {
+        const clean = victim.split('@')[0]
+        if (!protection.users.includes(clean)) continue
 
-        // Import permission checker
-        const { isSudo, isOwner } = require('../lib/permissions')
+        try {
+            await new Promise(r => setTimeout(r, 2000))
+            await sock.groupParticipantsUpdate(id, [victim], 'promote')
+            await sock.groupParticipantsUpdate(id, [author], 'demote')
 
-        // Check if attacker is owner/sudo (immune)
-        if (isOwner(author) || isSudo(author)) {
-            console.log(`[ANTIDEMOTE] Attacker is owner/sudo - allowing demote`)
-            return
+            await sock.sendMessage(id, {
+                text: `🛡️ *ANTI-DEMOTE ACTIVATED*\n\nProtected user restored.`,
+                mentions: [victim, author]
+            })
+        } catch (err) {
+            console.error('[ANTIDEMOTE] Protection failed:', err)
         }
-
-        // Check each demoted user
-        for (const victimJid of participants) {
-            const cleanVictim = victimJid.split('@')[0]
-
-            // Check if victim is protected
-            if (groupProtection.users.includes(cleanVictim)) {
-                console.log(`[ANTIDEMOTE] Protected user ${cleanVictim} was demoted!`)
-
-                // Wait a moment to ensure WhatsApp processes the demote
-                await new Promise(resolve => setTimeout(resolve, 2000))
-
-                try {
-                    // 1. Re-promote the victim
-                    await sock.groupParticipantsUpdate(groupJid, [victimJid], 'promote')
-                    console.log(`[ANTIDEMOTE] Re-promoted victim: ${cleanVictim}`)
-
-                    // 2. Demote the attacker
-                    await sock.groupParticipantsUpdate(groupJid, [author], 'demote')
-                    console.log(`[ANTIDEMOTE] Demoted attacker: ${author}`)
-
-                    // 3. Send notification
-                    await sock.sendMessage(groupJid, {
-                        text: `🛡️ *ANTI-DEMOTE PROTECTION ACTIVATED*
-
-⚔️ Attack Detected!
-👤 Attacker: @${author.split('@')[0]}
-🛡️ Protected User: @${cleanVictim}
-
-✅ Actions Taken:
-1. Re-promoted protected user
-2. Demoted attacker
-
-⚠️ Protected users cannot be demoted!
-
-Type ${config.PREFIX}protected to see protected users`,
-                        mentions: [author, victimJid]
-                    })
-
-                } catch (error) {
-                    console.error(`[ANTIDEMOTE] Failed to execute protection:`, error)
-                    
-                    // Send error notification
-                    await sock.sendMessage(groupJid, {
-                        text: `⚠️ *ANTI-DEMOTE PROTECTION FAILED*
-
-❌ Could not restore @${cleanVictim}
-
-Possible reasons:
-• Bot lost admin rights
-• Network issue
-• Rate limit
-
-Please manually promote the user back.`,
-                        mentions: [victimJid]
-                    })
-                }
-            }
-        }
-
-    } catch (error) {
-        console.error('[ANTIDEMOTE] Error in handleGroupUpdate:', error)
     }
 }
 
-// Helper function for context info
+// ========================================
+// CONTEXT HELPER
+// ========================================
 function createContext(sender, name) {
     return {
         mentionedJid: [sender],
@@ -462,8 +263,8 @@ function createContext(sender, name) {
     }
 }
 
-module.exports = { 
+module.exports = {
     handler,
     handleGroupUpdate,
-    protectedUsers // Export for testing/debugging
+    protectedUsers
 }
