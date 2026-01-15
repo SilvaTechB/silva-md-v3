@@ -1,115 +1,34 @@
-// silva.js — Updated with fixes for group functionality and error handling
-const { File: BufferFile } = require('node:buffer');
-global.File = BufferFile;
-
-// ✅ Silva Tech Inc Property 2025
-const baileys = require('@whiskeysockets/baileys');
+// ==============================
+// 📦 IMPORTS SECTION
+// ==============================
 const {
     makeWASocket,
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    Browsers,
     DisconnectReason,
-    isJidGroup,
-    isJidBroadcast,
-    isJidStatusBroadcast,
-    areJidsSameUser,
-    downloadContentFromMessage,
-    makeInMemoryStore
-} = baileys;
+    useMultiFileAuthState,
+    downloadMediaMessage,
+    getContentType,
+    Browsers,
+    makeCacheableSignalKeyStore,
+    fetchLatestBaileysVersion,
+    delay,
+    proto
+} = require('@whiskeysockets/baileys');
 
+const { Boom } = require('@hapi/boom');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const zlib = require('zlib');
-const express = require('express');
-const P = require('pino');
-const { handleMessages } = require('./handler');
+const NodeCache = require('node-cache');
+const qrcode = require('qrcode-terminal');
+const pino = require('pino');
+
+// Import configuration
 const config = require('./config.js');
 
-// ✅ FIXED: Create store correctly
-const store = makeInMemoryStore({ logger: P({ level: 'silent' }) });
+// Import status handler
+const statusHandler = require('./lib/status.js');
 
-const prefix = config.PREFIX || '.';
-const tempDir = path.join(os.tmpdir(), 'silva-cache');
-const port = process.env.PORT || 25680;
-const pluginsDir = path.join(__dirname, 'plugins');
-
-// ✅ Session paths
-const sessionDir = path.join(__dirname, 'session');
-const credsPath = path.join(sessionDir, 'creds.json');
-
-// ✅ Create session directory if not exists
-function createDirIfNotExist(dir) {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-}
-createDirIfNotExist(sessionDir);
-
-// ✅ Load session from compressed base64
-async function loadSession() {
-    try {
-        // Remove old session file if exists
-        if (fs.existsSync(credsPath)) {
-            fs.unlinkSync(credsPath);
-            logMessage('INFO', "♻️ ᴏʟᴅ ꜱᴇꜱꜱɪᴏɴ ʀᴇᴍᴏᴠᴇᴅ");
-        }
-
-        if (!config.SESSION_ID || typeof config.SESSION_ID !== 'string') {
-            throw new Error("❌ SESSION_ID is missing or invalid");
-        }
-
-        const [header, b64data] = config.SESSION_ID.split('~');
-
-        if (header !== "Silva" || !b64data) {
-            throw new Error("❌ Invalid session format. Expected 'Silva~.....'");
-        }
-
-        // Clean and decode base64
-        const cleanB64 = b64data.replace('...', '');
-        const compressedData = Buffer.from(cleanB64, 'base64');
-        
-        // Decompress using zlib
-        const decompressedData = zlib.gunzipSync(compressedData);
-
-        // Write the decompressed session data
-        fs.writeFileSync(credsPath, decompressedData, "utf8");
-        logMessage('SUCCESS', "✅ ɴᴇᴡ ꜱᴇꜱꜱɪᴏɴ ʟᴏᴀᴅᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ");
-
-    } catch (e) {
-        logMessage('ERROR', `Session Error: ${e.message}`);
-        throw e;
-    }
-}
-
-// ✅ Message Cache for Anti-Delete
-const messageCache = new Map();
-
-// ✅ Message Logger Setup
-const logDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
-
-function getLogFileName() {
-    const date = new Date();
-    return `messages-${date.getFullYear()}-${date.getMonth()+1}-${date.getDate()}.log`;
-}
-
-function logMessage(type, message) {
-    if (!config.DEBUG && type === 'DEBUG') return;
-
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] [${type}] ${message}\n`;
-    console.log(logEntry.trim());
-    const logFile = path.join(logDir, getLogFileName());
-    try {
-        fs.appendFileSync(logFile, logEntry);
-    } catch (e) {
-        console.error('Failed writing log:', e.message);
-    }
-}
-
-// ✅ Global Context Info
+// Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
     isForwarded: true,
@@ -120,748 +39,1436 @@ const globalContextInfo = {
     }
 };
 
-// ✅ Safe Get User JID
-function safeGetUserJid(sock) {
-    try {
-        return sock.user?.id || null;
-    } catch {
-        return null;
-    }
-}
-
-// ✅ Ensure Temp Directory Exists
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-setInterval(() => {
-    try {
-        fs.readdirSync(tempDir).forEach(file => fs.unlinkSync(path.join(tempDir, file)));
-    } catch (e) { /* ignore */ }
-}, 5 * 60 * 1000);
-
-// ✅ Load Plugins
-let plugins = new Map();
-function loadPlugins() {
-    if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir);
-    const files = fs.readdirSync(pluginsDir).filter(file => file.endsWith('.js'));
-    plugins.clear();
-    for (const file of files) {
-        try {
-            delete require.cache[require.resolve(path.join(pluginsDir, file))];
-            const plugin = require(path.join(pluginsDir, file));
-            plugins.set(file.replace('.js', ''), plugin);
-        } catch (err) {
-            logMessage('ERROR', `Failed loading plugin ${file}: ${err.message}`);
+// ==============================
+// 🪵 LOGGER SECTION (ENHANCED FOR DEBUGGING)
+// ==============================
+const logger = pino({
+    level: config.DEBUG_MODE ? 'debug' : 'error',
+    transport: config.DEBUG_MODE ? {
+        target: 'pino-pretty',
+        options: {
+            colorize: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname'
         }
-    }
-    logMessage('INFO', `✅ Loaded ${plugins.size} plugins`);
-}
-loadPlugins();
+    } : undefined
+});
 
-// ✅ Utility helpers
-async function downloadAsBuffer(messageObj, typeHint = 'file') {
-    try {
-        const stream = await downloadContentFromMessage(messageObj, typeHint);
-        let buffer = Buffer.from([]);
-        for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-        return buffer;
-    } catch (err) {
-        logMessage('ERROR', `downloadAsBuffer error: ${err.message}`);
-        return null;
+// Enhanced logger for bot messages
+class BotLogger {
+    log(type, message) {
+        const timestamp = new Date().toISOString();
+        const colors = {
+            SUCCESS: '\x1b[32m',
+            ERROR: '\x1b[31m',
+            INFO: '\x1b[36m',
+            WARNING: '\x1b[33m',
+            BOT: '\x1b[35m',
+            DEBUG: '\x1b[90m',
+            MESSAGE: '\x1b[34m',
+            COMMAND: '\x1b[95m',
+            RESET: '\x1b[0m'
+        };
+        console.log(`${colors[type] || colors.INFO}[${type}] ${timestamp} - ${message}${colors.RESET}`);
     }
 }
 
-function isBotMentioned(message, botJid) {
+const botLogger = new BotLogger();
+
+// ==============================
+// 🔐 SESSION MANAGEMENT
+// ==============================
+async function loadSession() {
     try {
-        const extended = message?.extendedTextMessage;
-        if (!extended) return false;
-        const mentions = extended.contextInfo?.mentionedJid || [];
-        return mentions.includes(botJid);
+        const credsPath = './sessions/creds.json';
+        
+        if (!fs.existsSync('./sessions')) {
+            fs.mkdirSync('./sessions', { recursive: true });
+        }
+        
+        // Clean old sessions if needed
+        if (fs.existsSync(credsPath)) {
+            try {
+                fs.unlinkSync(credsPath);
+                botLogger.log('INFO', "♻️ Old session removed");
+            } catch (e) {
+                // Ignore error
+            }
+        }
+
+        if (!config.SESSION_ID || typeof config.SESSION_ID !== 'string') {
+            botLogger.log('WARNING', "SESSION_ID missing, using QR");
+            return false;
+        }
+
+        const [header, b64data] = config.SESSION_ID.split('~');
+
+        if (header !== "Silva" || !b64data) {
+            botLogger.log('ERROR', "Invalid session format");
+            return false;
+        }
+
+        const cleanB64 = b64data.replace('...', '');
+        const compressedData = Buffer.from(cleanB64, 'base64');
+        const decompressedData = zlib.gunzipSync(compressedData);
+
+        fs.writeFileSync(credsPath, decompressedData, "utf8");
+        botLogger.log('SUCCESS', "✅ Session loaded successfully");
+        return true;
     } catch (e) {
+        botLogger.log('ERROR', "Session Error: " + e.message);
         return false;
     }
 }
 
-// ✅ Generate Config Table
-function generateConfigTable() {
-    const configs = [
-        { name: 'MODE', value: config.MODE },
-        { name: 'ANTIDELETE_GROUP', value: config.ANTIDELETE_GROUP },
-        { name: 'ANTIDELETE_PRIVATE', value: config.ANTIDELETE_PRIVATE },
-        { name: 'AUTO_STATUS_SEEN', value: config.AUTO_STATUS_SEEN },
-        { name: 'AUTO_STATUS_REACT', value: config.AUTO_STATUS_REACT },
-        { name: 'AUTO_STATUS_REPLY', value: config.AUTO_STATUS_REPLY },
-        { name: 'AUTO_REACT_NEWSLETTER', value: config.AUTO_REACT_NEWSLETTER },
-        { name: 'ANTI_LINK', value: config.ANTI_LINK },
-        { name: 'ALWAYS_ONLINE', value: config.ALWAYS_ONLINE },
-        { name: 'GROUP_COMMANDS', value: config.GROUP_COMMANDS }
-    ];
-
-    let table = '╔══════════════════════════╦═══════════╗\n';
-    table += '║        Config Name       ║   Value   ║\n';
-    table += '╠══════════════════════════╬═══════════╣\n';
-
-    for (const c of configs) {
-        const paddedName = c.name.padEnd(24, ' ');
-        const paddedValue = String(c.value).padEnd(9, ' ');
-        table += `║ ${paddedName} ║ ${paddedValue} ║\n`;
-    }
-
-    table += '╚══════════════════════════╩═══════════╝';
-    return table;
-}
-
-// ✅ Fancy Bio Generator
-function generateFancyBio() {
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('en-KE', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    });
-
-    const timeStr = now.toLocaleTimeString('en-KE', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-    });
-
-    const bios = [
-        `✨ ${config.BOT_NAME} ✦ Online ✦ ${dateStr} ✦`,
-        `⚡ Silva MD Active ✦ ${timeStr} ✦ ${dateStr} ✦`,
-        `💫 ${config.BOT_NAME} Operational ✦ ${dateStr} ✦`,
-        `🚀 Silva MD Live ✦ ${dateStr} ✦ ${timeStr} ✦`,
-        `🌟 ${config.BOT_NAME} Running ✦ ${dateStr} ✦`
-    ];
-
-    return bios[Math.floor(Math.random() * bios.length)];
-}
-
-// ✅ Modernized Welcome Message
-async function sendWelcomeMessage(sock) {
-    const configTable = generateConfigTable();
-    
-    const welcomeMsg = `
-*✨ ${config.BOT_NAME} is now active!*
-
-• **Prefix:** \`${prefix}\`
-• **Mode:** ${config.MODE}
-• **Plugins Loaded:** ${plugins.size}
-
-*⚙️ Active Configuration:*
-\`\`\`
-${configTable}
-\`\`\`
-
-*📝 Description:*
-${config.DESCRIPTION}
-
-_⚡ Powered by Silva Tech Inc._
-    `.trim();
-
-    try {
-        await sock.sendMessage(sock.user.id, {
-            text: welcomeMsg,
-            contextInfo: {
-                ...globalContextInfo,
-                externalAdReply: {
-                    title: `${config.BOT_NAME} Online`,
-                    body: "Enhanced multi-device WhatsApp bot",
-                    thumbnailUrl: "https://files.catbox.moe/5uli5p.jpeg",
-                    sourceUrl: "https://github.com/SilvaTechB/silva-md-bot",
-                    mediaType: 1,
-                    renderLargerThumbnail: true
-                }
-            }
-        });
-        logMessage('SUCCESS', 'Modern welcome message sent to owner.');
-    } catch (e) {
-        logMessage('WARN', `Welcome message failed: ${e.message}`);
-        try {
-            await sock.sendMessage(sock.user.id, { text: `✅ ${config.BOT_NAME} is now online!\nPrefix: ${prefix}` });
-        } catch (fallbackErr) {
-            logMessage('DEBUG', `Fallback also failed: ${fallbackErr.message}`);
+// ==============================
+// 🔧 UTILITY FUNCTIONS (FIXED FOR LID OWNER DETECTION)
+// ==============================
+class FunctionsWrapper {
+    constructor() {
+        this.tempDir = path.join(__dirname, './temp');
+        if (!fs.existsSync(this.tempDir)) {
+            fs.mkdirSync(this.tempDir, { recursive: true });
         }
-    }
-}
-
-// ✅ Update Profile Status
-async function updateProfileStatus(sock) {
-    try {
-        const bio = generateFancyBio();
-        await sock.updateProfileStatus(bio);
-        logMessage('SUCCESS', `✅ Bio updated: ${bio}`);
-    } catch (err) {
-        logMessage('ERROR', `❌ Failed to update bio: ${err.message}`);
-    }
-}
-
-// ✅ Connect to WhatsApp (main)
-async function connectToWhatsApp() {
-    await loadSession();
-    
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    const { version } = await fetchLatestBaileysVersion();
-
-    const cryptoOptions = {
-        maxSharedKeys: 1000,
-        sessionThreshold: 0,
-        cache: {
-            TRANSACTION: false,
-            PRE_KEYS: false
-        }
-    };
-
-    const sock = makeWASocket({
-        logger: P({ level: config.DEBUG ? 'debug' : 'silent' }),
-        printQRInTerminal: false,
-        browser: Browsers.macOS('Safari'),
-        auth: state,
-        version,
-        markOnlineOnConnect: config.ALWAYS_ONLINE,
-        syncFullHistory: false,
-        generateHighQualityLinkPreview: false,
-        getMessage: async () => undefined,
-        ...cryptoOptions
-    });
-
-    try {
-        store.bind(sock.ev);
-    } catch (e) {
-        logMessage('WARN', `store.bind failed: ${e.message}`);
+        this.botNumber = null;
+        this.botLid = null; // Store bot's LID
     }
 
-    try {
-        const { setupConnectionHandlers } = require('./handler');
-        if (typeof setupConnectionHandlers === 'function') setupConnectionHandlers(sock);
-    } catch (e) {
-        logMessage('DEBUG', 'No setupConnectionHandlers exported from handler (ok).');
-    }
-
-    sock.ev.on('connection.update', async update => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            logMessage('WARN', `Connection closed: ${lastDisconnect?.error?.output?.statusCode || 'Unknown'}`);
-            if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
-                logMessage('INFO', 'Reconnecting...');
-                setTimeout(() => connectToWhatsApp(), 2000);
-            }
-        } else if (connection === 'open') {
-            logMessage('SUCCESS', '✅ Connected to WhatsApp');
-
-            global.botJid = sock.user.id;
-
-            await updateProfileStatus(sock);
-            await sendWelcomeMessage(sock);
-
-            const newsletterIds = config.NEWSLETTER_IDS || [
-                '120363276154401733@newsletter',
-                '120363200367779016@newsletter',
-                '120363199904258143@newsletter',
-                '120363422731708290@newsletter'
-            ];
-            for (const jid of newsletterIds) {
-                try {
-                    if (typeof sock.newsletterFollow === 'function') {
-                        await sock.newsletterFollow(jid);
-                        logMessage('SUCCESS', `✅ Followed newsletter ${jid}`);
-                    } else {
-                        logMessage('DEBUG', `newsletterFollow not available in this Baileys version`);
-                    }
-                } catch (err) {
-                    logMessage('ERROR', `Failed to follow newsletter ${jid}: ${err.message}`);
-                }
-            }
-        }
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('messages.upsert', ({ messages }) => {
-        if (!Array.isArray(messages)) return;
+    async isAdmin(message, sock) {
+        if (!message.key.remoteJid.endsWith('@g.us')) return false;
         
-        for (const m of messages) {
-            if (!m.message || !m.key.id) continue;
-            
-            const cacheKey = `${m.key.remoteJid}-${m.key.id}`;
-            messageCache.set(cacheKey, {
-                message: m.message,
-                timestamp: Date.now()
-            });
-        }
-        
-        const now = Date.now();
-        for (const [key, value] of messageCache.entries()) {
-            if (now - value.timestamp > 60 * 60 * 1000) {
-                messageCache.delete(key);
-            }
-        }
-    });
-
-    sock.ev.on("messages.update", async (updates) => {
-        for (const { key, update } of updates) {
-            if (key.remoteJid === "status@broadcast") continue;
-            if (update?.message === null && !key.fromMe) {
-                const cacheKey = `${key.remoteJid}-${key.id}`;
-                const original = messageCache.get(cacheKey);
-                const owner = safeGetUserJid(sock);
-
-                if (!original?.message || !owner) continue;
-                
-                sock.sendMessage(owner, {
-                    text: `🚨 *Anti-Delete* — Message recovered from ${key.participant || key.remoteJid}`,
-                    contextInfo: globalContextInfo
-                }).catch(() => {});
-
-                const msgObj = original.message;
-                const mType = Object.keys(msgObj)[0];
-
-                try {
-                    if (["conversation", "extendedTextMessage"].includes(mType)) {
-                        const text = msgObj.conversation || msgObj.extendedTextMessage?.text;
-                        await sock.sendMessage(owner, { text, contextInfo: globalContextInfo });
-                    } else if (["imageMessage", "videoMessage", "audioMessage", "stickerMessage", "documentMessage"].includes(mType)) {
-                        const stream = await downloadContentFromMessage(msgObj[mType], mType.replace("Message", ""));
-                        let buffer = Buffer.from([]);
-                        for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-                        const field = mType.replace("Message", "");
-                        const payload = { [field]: buffer, contextInfo: globalContextInfo };
-                        if (msgObj[mType]?.caption) payload.caption = msgObj[mType].caption;
-                        await sock.sendMessage(owner, payload);
-                    }
-                } catch (err) {
-                    logMessage("DEBUG", `Recovery failed: ${err.message}`);
-                }
-            }
-        }
-    });
-
-    sock.ev.on('messages.delete', async (item) => {
         try {
-            logMessage('DEBUG', 'messages.delete triggered');
-            const keys = Array.isArray(item) ? item.map(i => i.key) : (item?.keys || []);
-            for (const key of keys) {
-                const from = key.remoteJid;
-                const isGroup = from?.endsWith?.('@g.us');
-                if ((isGroup && !config.ANTIDELETE_GROUP) || (!isGroup && !config.ANTIDELETE_PRIVATE)) {
-                    logMessage('DEBUG', `Anti-delete disabled for ${isGroup ? 'group' : 'private'}`);
-                    continue;
-                }
-
-                const deletedMsg = await store.loadMessage(from, key.id);
-                if (!deletedMsg) {
-                    logMessage('WARN', `No stored message found for ${key.id}`);
-                    continue;
-                }
-
-                const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
-                const sender = key.participant || from;
-                const senderName = (sender || '').split('@')[0];
-                const msg = deletedMsg.message;
-                const msgType = Object.keys(msg)[0];
-
-                const caption = `⚠️ *Anti-Delete Alert!*\n\n👤 *Sender:* @${senderName}\n*Chat:* ${isGroup ? 'Group' : 'Private'}\n\n💬 *Restored Message:*`;
-                const opts = { contextInfo: { mentionedJid: [sender] } };
-                const targetJid = config.ANTIDELETE_SEND_TO_ORIGINAL ? from : ownerJid;
-
-                switch (msgType) {
-                    case 'conversation':
-                        await sock.sendMessage(targetJid, { text: `${caption}\n\n${msg.conversation}`, ...opts });
-                        break;
-                    case 'extendedTextMessage':
-                        await sock.sendMessage(targetJid, { text: `${caption}\n\n${msg.extendedTextMessage.text}`, ...opts });
-                        break;
-                    case 'imageMessage': {
-                        const buffer = await downloadAsBuffer(msg.imageMessage, 'image');
-                        if (buffer) await sock.sendMessage(targetJid, { image: buffer, caption: `${caption}\n\n${msg.imageMessage.caption || ''}`, ...opts });
-                        break;
-                    }
-                    case 'videoMessage': {
-                        const buffer = await downloadAsBuffer(msg.videoMessage, 'video');
-                        if (buffer) await sock.sendMessage(targetJid, { video: buffer, caption: `${caption}\n\n${msg.videoMessage.caption || ''}`, ...opts });
-                        break;
-                    }
-                    case 'documentMessage': {
-                        const buffer = await downloadAsBuffer(msg.documentMessage, 'document');
-                        if (buffer) await sock.sendMessage(targetJid, {
-                            document: buffer,
-                            mimetype: msg.documentMessage.mimetype,
-                            fileName: msg.documentMessage.fileName || 'Restored-File',
-                            caption,
-                            ...opts
-                        });
-                        break;
-                    }
-                    default:
-                        await sock.sendMessage(targetJid, { text: `${caption}\n\n[Unsupported Message Type: ${msgType}]`, ...opts });
-                        break;
-                }
-
-                logMessage('SUCCESS', `Restored deleted message from ${senderName}`);
-            }
-        } catch (err) {
-            logMessage('ERROR', `Anti-Delete Error: ${err.stack || err.message}`);
-        }
-    });
-
-    const statusSaverDir = path.join(__dirname, 'status_saver');
-    if (!fs.existsSync(statusSaverDir)) fs.mkdirSync(statusSaverDir, { recursive: true });
-
-    async function saveMedia(message, msgType, sockLocal, caption) {
-        try {
-            const stream = await downloadContentFromMessage(
-                message.message[msgType],
-                msgType.replace('Message', '')
-            );
-
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-
-            const extMap = {
-                imageMessage: 'jpg',
-                videoMessage: 'mp4',
-                audioMessage: 'ogg'
-            };
-
-            const filename = `${Date.now()}.${extMap[msgType]}`;
-            const filePath = path.join(statusSaverDir, filename);
-            fs.writeFileSync(filePath, buffer);
-
-            const selfJid = sockLocal.user.id.includes(':') ? `${sockLocal.user.id.split(':')[0]}@s.whatsapp.net` : sockLocal.user.id;
-
-            await sockLocal.sendMessage(selfJid, {
-                [msgType.replace('Message', '')]: { url: filePath },
-                caption: caption,
-                mimetype: message.message[msgType].mimetype
-            });
-            return true;
-        } catch (error) {
-            logMessage('ERROR', `Media Save Error: ${error.message}`);
+            const metadata = await sock.groupMetadata(message.key.remoteJid);
+            const participant = message.key.participant || message.key.remoteJid;
+            const adminList = metadata.participants.filter(p => p.admin).map(p => p.id);
+            return adminList.includes(participant);
+        } catch {
             return false;
         }
     }
 
-    function unwrapStatus(msg) {
-        const inner =
-            msg.message?.viewOnceMessageV2?.message ||
-            msg.message?.viewOnceMessage?.message ||
-            msg.message || {};
-        const msgType = Object.keys(inner)[0] || '';
-        return { inner, msgType };
+    isOwner(sender) {
+        botLogger.log('DEBUG', `[OWNER CHECK] Checking if sender is owner: ${sender}`);
+        
+        // First: If message is from the bot itself (fromMe), it's automatically owner
+        // We'll handle this in the message handler by checking fromMe flag
+        
+        // Extract phone number or LID from sender
+        let phoneNumber = '';
+        let isLid = false;
+        
+        if (sender.includes('@lid')) {
+            // Handle LID format: 81712071631074@lid
+            phoneNumber = sender.split('@')[0];
+            isLid = true;
+            botLogger.log('DEBUG', `[OWNER CHECK] Sender is LID: ${phoneNumber}`);
+        } else if (sender.includes('@s.whatsapp.net')) {
+            // Handle standard JID format: 254700143167@s.whatsapp.net
+            phoneNumber = sender.split('@')[0];
+            botLogger.log('DEBUG', `[OWNER CHECK] Sender is JID: ${phoneNumber}`);
+        } else if (sender.includes(':')) {
+            // Handle other formats with colon
+            phoneNumber = sender.split(':')[0];
+        } else {
+            phoneNumber = sender;
+        }
+        
+        // Clean the phone number (remove non-digits)
+        const cleanSender = phoneNumber.replace(/[^0-9]/g, '');
+        botLogger.log('DEBUG', `[OWNER CHECK] Cleaned sender: ${cleanSender}`);
+        
+        // Check 1: Is this the bot's LID?
+        if (isLid && this.botLid) {
+            const cleanBotLid = this.botLid.replace(/[^0-9]/g, '');
+            if (cleanSender === cleanBotLid) {
+                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot LID - GRANTING OWNER');
+                return true;
+            }
+        }
+        
+        // Check 2: Is this the bot's phone number?
+        if (this.botNumber) {
+            const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
+            botLogger.log('DEBUG', `[OWNER CHECK] Bot number: ${cleanBotNum}`);
+            if (cleanSender === cleanBotNum) {
+                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot number - GRANTING OWNER');
+                return true;
+            }
+        }
+        
+        // Check 3: Check against config owner numbers
+        let ownerNumbers = [];
+        if (config.OWNER_NUMBER) {
+            if (Array.isArray(config.OWNER_NUMBER)) {
+                ownerNumbers = config.OWNER_NUMBER.map(num => {
+                    const cleanNum = num.replace(/[^0-9]/g, '');
+                    botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${num} -> ${cleanNum}`);
+                    return cleanNum;
+                });
+            } else if (typeof config.OWNER_NUMBER === 'string') {
+                const cleanNum = config.OWNER_NUMBER.replace(/[^0-9]/g, '');
+                ownerNumbers = [cleanNum];
+                botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${config.OWNER_NUMBER} -> ${cleanNum}`);
+            }
+        }
+        
+        // Check 4: Also check connected number from config
+        if (config.CONNECTED_NUMBER) {
+            const connectedNumber = config.CONNECTED_NUMBER.replace(/[^0-9]/g, '');
+            ownerNumbers.push(connectedNumber);
+            botLogger.log('DEBUG', `[OWNER CHECK] Connected number from config: ${connectedNumber}`);
+        }
+        
+        // Remove duplicates
+        ownerNumbers = [...new Set(ownerNumbers)];
+        botLogger.log('DEBUG', `[OWNER CHECK] All owner numbers to check: ${ownerNumbers.join(', ')}`);
+        
+        // Check if sender matches any owner number
+        const isOwner = ownerNumbers.some(ownerNum => {
+            const match = cleanSender === ownerNum || 
+                         cleanSender.endsWith(ownerNum) || 
+                         ownerNum.endsWith(cleanSender);
+            if (match) {
+                botLogger.log('DEBUG', `[OWNER CHECK] Match found: ${cleanSender} === ${ownerNum}`);
+            }
+            return match;
+        });
+        
+        botLogger.log('DEBUG', `[OWNER CHECK] Final result for ${cleanSender}: ${isOwner}`);
+        return isOwner;
     }
 
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        try {
-            if (!Array.isArray(messages) || messages.length === 0) return;
+    setBotNumber(number) {
+        if (number) {
+            this.botNumber = number.replace(/[^0-9]/g, '');
+            botLogger.log('INFO', `🤖 Bot connected as: ${this.botNumber}`);
+            
+            // Also store as owner if not already in config
+            if (config.OWNER_NUMBER) {
+                const ownerNumbers = Array.isArray(config.OWNER_NUMBER) ? 
+                    config.OWNER_NUMBER : [config.OWNER_NUMBER];
+                const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
+                
+                // Check if bot number is already in owner list
+                const isAlreadyOwner = ownerNumbers.some(ownerNum => 
+                    ownerNum.replace(/[^0-9]/g, '') === cleanBotNum
+                );
+                
+                if (!isAlreadyOwner) {
+                    botLogger.log('INFO', `✅ Added bot number ${this.botNumber} to owner list`);
+                }
+            }
+        }
+    }
 
-            if (type && !['notify', 'append'].includes(type)) {
-                logMessage('DEBUG', `Skipping message type: ${type}`);
+    setBotLid(lid) {
+        if (lid) {
+            this.botLid = lid.split('@')[0]; // Store just the number part
+            botLogger.log('INFO', `🔑 Bot LID detected: ${this.botLid}`);
+        }
+    }
+
+    isAllowed(sender, jid) {
+        // Owner is always allowed
+        if (this.isOwner(sender)) {
+            botLogger.log('INFO', `✅ Owner access granted for: ${sender}`);
+            return true;
+        }
+        
+        if (config.BOT_MODE === 'public') return true;
+        
+        if (config.BOT_MODE === 'private') {
+            // Allow groups in private mode
+            if (jid.endsWith('@g.us')) return true;
+            
+            // Check allowed users
+            if (config.ALLOWED_USERS && Array.isArray(config.ALLOWED_USERS)) {
+                const senderNumber = sender.split('@')[0].replace(/[^0-9]/g, '');
+                const allowedNumbers = config.ALLOWED_USERS.map(num => num.replace(/[^0-9]/g, ''));
+                return allowedNumbers.includes(senderNumber);
+            }
+            return false;
+        }
+        
+        return true;
+    }
+
+    formatBytes(bytes, decimals = 2) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    formatJid(number) {
+        if (!number) return null;
+        const cleaned = number.replace(/[^0-9]/g, '');
+        if (cleaned.length < 10) return null;
+        return cleaned + '@s.whatsapp.net';
+    }
+
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // Extract text from message
+    extractText(message) {
+        if (!message) return '';
+        
+        if (message.conversation) {
+            return message.conversation;
+        } else if (message.extendedTextMessage?.text) {
+            return message.extendedTextMessage.text;
+        } else if (message.imageMessage?.caption) {
+            return message.imageMessage.caption;
+        } else if (message.videoMessage?.caption) {
+            return message.videoMessage.caption;
+        } else if (message.documentMessage?.caption) {
+            return message.documentMessage.caption;
+        } else if (message.audioMessage?.caption) {
+            return message.audioMessage.caption;
+        }
+        return '';
+    }
+}
+
+// ==============================
+// 💾 STORE IMPLEMENTATION
+// ==============================
+class MessageStore {
+    constructor() {
+        this.messageCache = new NodeCache({ stdTTL: 3600 });
+        this.chatCache = new NodeCache({ stdTTL: 300 });
+        this.deletedMessages = new Map();
+    }
+
+    async getMessage(key) {
+        return this.messageCache.get(key.id);
+    }
+
+    async setMessage(key, message) {
+        this.messageCache.set(key.id, message);
+    }
+
+    async getChat(jid) {
+        return this.chatCache.get(jid);
+    }
+
+    async setChat(jid, chat) {
+        this.chatCache.set(jid, chat);
+    }
+
+    async saveDeletedMessage(key, message) {
+        if (message && !message.key?.fromMe) {
+            this.deletedMessages.set(key.id, {
+                ...message,
+                timestamp: Date.now(),
+                deletedAt: Date.now()
+            });
+            
+            setTimeout(() => {
+                this.deletedMessages.delete(key.id);
+            }, 300000);
+        }
+    }
+
+    async getDeletedMessage(keyId) {
+        return this.deletedMessages.get(keyId);
+    }
+}
+
+// ==============================
+// 🧩 PLUGIN MANAGER
+// ==============================
+class PluginManager {
+    constructor() {
+        this.commandHandlers = new Map();
+        this.pluginInfo = new Map();
+        this.functions = new FunctionsWrapper();
+    }
+
+    async loadPlugins(dir = 'silvaxlab') {
+        try {
+            const pluginDir = path.join(__dirname, dir);
+            
+            if (!fs.existsSync(pluginDir)) {
+                fs.mkdirSync(pluginDir, { recursive: true });
+                botLogger.log('INFO', "Created plugin directory: " + dir);
+                this.createExamplePlugins(pluginDir);
                 return;
             }
 
-            for (const m of messages) {
-                if (m.key.remoteJid === 'status@broadcast') {
-                    try {
-                        const statusId = m.key.id;
-                        const userJid = m.key.participant;
-                        logMessage('EVENT', `Status update from ${userJid}: ${statusId}`);
+            const pluginFiles = fs.readdirSync(pluginDir)
+                .filter(file => file.endsWith('.js') && !file.startsWith('_'));
 
-                        const { inner, msgType } = unwrapStatus(m);
+            botLogger.log('INFO', "Found " + pluginFiles.length + " plugin(s) in " + dir);
 
-                        if (config.AUTO_STATUS_SEEN) {
-                            try {
-                                await sock.readMessages([m.key]);
-                                logMessage('INFO', `Status seen: ${statusId}`);
-                            } catch (e) {
-                                logMessage('WARN', `Status seen failed: ${e.message}`);
-                            }
-                        }
-
-                        if (config.AUTO_STATUS_REACT) {
-                            try {
-                                const emojis = (config.CUSTOM_REACT_EMOJIS || '❤️,🔥,💯,😍,👏').split(',');
-                                const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)].trim();
-                                await sock.sendMessage(userJid, {
-                                    react: {
-                                        text: randomEmoji,
-                                        key: {
-                                            remoteJid: 'status@broadcast',
-                                            id: statusId,
-                                            participant: userJid
-                                        }
-                                    }
-                                });
-                                logMessage('INFO', `Reacted on status ${statusId} with: ${randomEmoji}`);
-                            } catch (e) {
-                                logMessage('WARN', `Status reaction failed: ${e.message}`);
-                            }
-                        }
-
-                        if (config.AUTO_STATUS_REPLY) {
-                            try {
-                                await sock.sendMessage(userJid, {
-                                    text: config.AUTO_STATUS_MSG,
-                                    contextInfo: {
-                                        stanzaId: statusId,
-                                        participant: userJid,
-                                        quotedMessage: inner
-                                    }
-                                });
-                                logMessage('INFO', `Status replied: ${statusId}`);
-                            } catch (e) {
-                                logMessage('WARN', `Status reply failed: ${e.message}`);
-                            }
-                        }
-
-                        if (config.Status_Saver === 'true') {
-                            try {
-                                const userName = await sock.getName(userJid) || 'Unknown';
-                                const statusHeader = 'AUTO STATUS SAVER';
-                                let caption = `${statusHeader}\n\n*🩵 Status From:* ${userName}`;
-
-                                switch (msgType) {
-                                    case 'imageMessage':
-                                    case 'videoMessage':
-                                        if (inner[msgType]?.caption) caption += `\n*🩵 Caption:* ${inner[msgType].caption}`;
-                                        await saveMedia({ message: inner }, msgType, sock, caption);
-                                        break;
-                                    case 'audioMessage':
-                                        caption += `\n*🩵 Audio Status*`;
-                                        await saveMedia({ message: inner }, msgType, sock, caption);
-                                        break;
-                                    case 'extendedTextMessage':
-                                        caption = `${statusHeader}\n\n${inner.extendedTextMessage?.text || ''}`;
-                                        await sock.sendMessage(sock.user.id, { text: caption });
-                                        break;
-                                    default:
-                                        logMessage('WARN', `Unsupported status type: ${msgType}`);
-                                        break;
-                                }
-
-                                if (config.STATUS_REPLY === 'true') {
-                                    const replyMsg = config.STATUS_MSG || 'SILVA MD 💖 SUCCESSFULLY VIEWED YOUR STATUS';
-                                    await sock.sendMessage(userJid, { text: replyMsg });
-                                }
-                                logMessage('INFO', `Status saved: ${statusId}`);
-                            } catch (e) {
-                                logMessage('ERROR', `Status save failed: ${e.message}`);
-                            }
-                        }
-                    } catch (e) {
-                        logMessage('ERROR', `Status handler error: ${e.message}`);
-                    }
-
-                    continue;
-                }
-
-                if (!m.message) continue;
-
-                const sender = m.key.remoteJid;
-                const isGroupMsg = isJidGroup(sender);
-                const isNewsletter = sender && sender.endsWith && sender.endsWith('@newsletter');
-                const isBroadcast = isJidBroadcast(sender) || isJidStatusBroadcast(sender);
-
-                logMessage('MESSAGE', `New ${isNewsletter ? 'newsletter' : isGroupMsg ? 'group' : isBroadcast ? 'broadcast' : 'private'} message from ${sender}`);
-
-                if (isNewsletter && config.AUTO_REACT_NEWSLETTER) {
-                    try {
-                        const emojis = ['🤖','🔥','💫','❤️','👍','💯','✨','👏','😎'];
-                        const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
-                        await sock.sendMessage(m.key.remoteJid, {
-                            react: { text: randomEmoji, key: m.key }
+            for (const file of pluginFiles) {
+                try {
+                    const pluginPath = path.join(pluginDir, file);
+                    delete require.cache[require.resolve(pluginPath)];
+                    
+                    const pluginModule = require(pluginPath);
+                    
+                    if (pluginModule && pluginModule.handler && pluginModule.handler.command) {
+                        const handler = pluginModule.handler;
+                        this.commandHandlers.set(handler.command, handler);
+                        
+                        this.pluginInfo.set(handler.command.source, {
+                            help: handler.help || [],
+                            tags: handler.tags || [],
+                            group: handler.group || false,
+                            admin: handler.admin || false,
+                            botAdmin: handler.botAdmin || false,
+                            owner: handler.owner || false,
+                            filename: file
                         });
-                        logMessage('INFO', `Auto-reacted with ${randomEmoji} to ${m.key.remoteJid}`);
-                    } catch (e) {
-                        logMessage('ERROR', `Newsletter react failed: ${e.stack || e.message}`);
-                    }
-                }
-
-                if (isGroupMsg && config.GROUP_COMMANDS !== true) {
-                    logMessage('DEBUG', 'Group commands disabled in config, skipping message.');
-                    continue;
-                }
-
-                const messageType = Object.keys(m.message)[0];
-                let content = '';
-                let isMentioned = false;
-
-                if (messageType === 'conversation') {
-                    content = m.message.conversation || '';
-                } else if (messageType === 'extendedTextMessage') {
-                    content = m.message.extendedTextMessage.text || '';
-                    if (isGroupMsg && global.botJid) isMentioned = isBotMentioned(m.message, global.botJid);
-                } else if (messageType === 'imageMessage') {
-                    content = m.message.imageMessage.caption || '';
-                } else if (messageType === 'videoMessage') {
-                    content = m.message.videoMessage.caption || '';
-                } else if (messageType === 'documentMessage') {
-                    content = m.message.documentMessage.caption || '';
-                } else {
-                    continue;
-                }
-
-                logMessage('DEBUG', `Message content: ${content.substring(0, 100)}`);
-
-                let isForBot = false;
-                if (isGroupMsg) {
-                    isForBot = content.startsWith(prefix) || isMentioned;
-                } else {
-                    isForBot = content.startsWith(prefix);
-                }
-
-                if (!isForBot) {
-                    logMessage('INFO', 'Message not for bot, ignoring.');
-                    continue;
-                }
-
-                if (isMentioned) {
-                    const botNumber = (global.botJid || '').split('@')[0];
-                    content = content.replace(new RegExp(`@${botNumber}\\s*`, 'i'), '').trim();
-                }
-
-                const commandText = content.startsWith(prefix) ? content.slice(prefix.length).trim() : content.trim();
-                const [cmd, ...args] = commandText.split(/\s+/);
-                const command = (cmd || '').toLowerCase();
-
-                logMessage('COMMAND', `Detected command: ${command} | Args: ${args.join(' ')}`);
-
-                if (config.READ_MESSAGE) {
-                    try { await sock.readMessages([m.key]); } catch (e) { /* ignore */ }
-                }
-
-                if (command === 'ping') {
-                    const latency = m.messageTimestamp ? new Date().getTime() - m.messageTimestamp * 1000 : 0;
-                    await sock.sendMessage(sender, {
-                        text: `🏓 *Pong!* ${latency} ms ${config.BOT_NAME} is live!`,
-                        contextInfo: {
-                            ...globalContextInfo,
-                            externalAdReply: {
-                                title: `${config.BOT_NAME} speed`,
-                                body: "Explore the speed",
-                                thumbnailUrl: "https://files.catbox.moe/5uli5p.jpeg",
-                                sourceUrl: "https://github.com/SilvaTechB/silva-md-bot",
-                                mediaType: 1,
-                                renderLargerThumbnail: true
-                            }
-                        }
-                    }, { quoted: m });
-                    continue;
-                }
-
-                if (command === 'resetsession') {
-                    const ownerJid = `${config.OWNER_NUMBER}@s.whatsapp.net`;
-                    if (sender !== ownerJid) {
-                        await sock.sendMessage(sender, { text: '❌ This command is only for the owner!' }, { quoted: m });
-                        continue;
-                    }
-                    if (isGroupMsg) {
-                        await sock.sendMessage(sender, {
-                            protocolMessage: { senderKeyDistributionMessage: { groupId: sender } }
-                        });
-                        await sock.sendMessage(sender, { text: '✅ Group session reset initiated!' }, { quoted: m });
+                        
+                        botLogger.log('SUCCESS', "✅ Loaded plugin: " + file.replace('.js', ''));
                     } else {
-                        await sock.sendMessage(sender, { text: '✅ Session reset!' }, { quoted: m });
+                        botLogger.log('WARNING', "Plugin " + file + " has invalid format");
                     }
-                    continue;
-                }
-
-                if (command === 'alive') {
-                    await sock.sendMessage(sender, {
-                        image: { url: config.ALIVE_IMG },
-                        caption: config.LIVE_MSG,
-                        contextInfo: globalContextInfo
-                    }, { quoted: m });
-                    continue;
-                }
-
-                if (command === 'menu') {
-                    const cmds = ['ping', 'alive', 'menu', 'resetsession'];
-                    for (const plugin of plugins.values()) {
-                        if (Array.isArray(plugin.commands)) cmds.push(...plugin.commands);
-                    }
-                    const menuText = `*✦ ${config.BOT_NAME} ✦ Command Menu*\n\n` +
-                        cmds.map(c => `• ${prefix}${c}`).join('\n') +
-                        `\n\n⚡ Total Commands: ${cmds.length}\n\n✨ ${config.DESCRIPTION}`;
-
-                    await sock.sendMessage(sender, {
-                        image: { url: 'https://files.catbox.moe/5uli5p.jpeg' },
-                        caption: menuText,
-                        contextInfo: {
-                            ...globalContextInfo,
-                            externalAdReply: {
-                                title: config.BOT_NAME,
-                                body: "Explore all available commands",
-                                thumbnailUrl: "https://files.catbox.moe/5uli5p.jpeg",
-                                sourceUrl: "https://github.com/SilvaTechB/silva-md-bot",
-                                mediaType: 1,
-                                renderLargerThumbnail: true
-                            }
-                        }
-                    }, { quoted: m });
-                    continue;
-                }
-
-                let pluginFound = false;
-                for (const plugin of plugins.values()) {
-                    if (plugin.commands && plugin.commands.includes(command)) {
-                        pluginFound = true;
-                        try {
-                            logMessage('PLUGIN', `Executing plugin: ${plugin.commands}`);
-                            await plugin.handler({ sock, m, sender, args, contextInfo: globalContextInfo, isGroup: isGroupMsg });
-                            logMessage('SUCCESS', `Plugin executed: ${plugin.commands}`);
-                        } catch (err) {
-                            logMessage('ERROR', `❌ Plugin "${plugin.commands}" failed for command "${command}"`);
-                            logMessage('ERROR', `   Error: ${err.message}`);
-                            logMessage('ERROR', `   Stack: ${err.stack || 'No stack trace'}`);
-                            logMessage('DEBUG', `   Sender: ${sender}, Args: ${args}`);
-
-                            try {
-                                await sock.sendMessage(sender, {
-                                    text: `❌ Command "${command}" failed. Check bot logs for details.`
-                                }, { quoted: m });
-                            } catch (sendErr) {
-                                logMessage('WARN', `Could not send error message: ${sendErr.message}`);
-                            }
-                        }
-                        break;
-                    }
-                }
-
-                if (!pluginFound) {
-                    logMessage('WARN', `Command not found: ${command}`);
+                } catch (error) {
+                    botLogger.log('ERROR', "Failed to load plugin " + file + ": " + error.message);
                 }
             }
-        } catch (err) {
-            logMessage('ERROR', `messages.upsert consolidated handler error: ${err.stack || err.message}`);
+        } catch (error) {
+            botLogger.log('ERROR', "Plugin loading error: " + error.message);
         }
-    });
+    }
 
-    return sock;
+    createExamplePlugins(pluginDir) {
+        // Create example plugins if needed
+        const plugins = [];
+        for (const plugin of plugins) {
+            fs.writeFileSync(path.join(pluginDir, plugin.name), plugin.content);
+            botLogger.log('INFO', "Created plugin: " + plugin.name);
+        }
+    }
+
+    async executeCommand(context) {
+        const { text, jid, sender, isGroup, message, sock, args } = context;
+        
+        botLogger.log('COMMAND', `🔄 Processing command: ${text} from ${sender}`);
+        
+        // Check if user is allowed
+        if (!this.functions.isAllowed(sender, jid)) {
+            if (config.BOT_MODE === 'private') {
+                await sock.sendMessage(jid, { 
+                    text: '🔒 Private mode: Contact owner for access.' 
+                }, { quoted: message });
+                return true;
+            }
+            return false;
+        }
+        
+        for (const [commandRegex, handler] of this.commandHandlers.entries()) {
+            const commandMatch = text.split(' ')[0];
+            if (commandRegex.test(commandMatch)) {
+                try {
+                    // Check permissions - SPECIAL HANDLING FOR FROM_ME MESSAGES
+                    if (handler.owner && !this.functions.isOwner(sender)) {
+                        // If message is from bot itself (fromMe), allow it
+                        if (!message.key.fromMe) {
+                            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                            return true;
+                        }
+                    }
+                    
+                    if (handler.group && !isGroup) {
+                        await sock.sendMessage(jid, { text: '⚠️ Group only command' }, { quoted: message });
+                        return true;
+                    }
+                    
+                    if (handler.admin && isGroup) {
+                        const isAdmin = await this.functions.isAdmin(message, sock);
+                        if (!isAdmin) {
+                            await sock.sendMessage(jid, { text: '⚠️ Admin required' }, { quoted: message });
+                            return true;
+                        }
+                    }
+                    
+                    if (handler.botAdmin && isGroup) {
+                        try {
+                            const metadata = await sock.groupMetadata(jid);
+                            const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                            const botParticipant = metadata.participants.find(p => p.id === botJid);
+                            if (!botParticipant || !botParticipant.admin) {
+                                await sock.sendMessage(jid, { text: '⚠️ Bot needs admin rights' }, { quoted: message });
+                                return true;
+                            }
+                        } catch (e) {
+                            // Ignore error
+                        }
+                    }
+                    
+                    // Execute command
+                    botLogger.log('COMMAND', `✅ Executing plugin command: ${commandMatch} for ${sender}`);
+                    await handler.execute(context);
+                    return true;
+                    
+                } catch (error) {
+                    botLogger.log('ERROR', "Command error: " + error.message);
+                    await sock.sendMessage(jid, { 
+                        text: '❌ Error: ' + error.message
+                    }, { quoted: message });
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    getCommandList() {
+        const commands = [];
+        for (const [regex, info] of this.pluginInfo) {
+            commands.push({
+                command: regex.replace(/[\/\^$]/g, ''),
+                help: info.help[0] || 'No description',
+                tags: info.tags,
+                group: info.group,
+                admin: info.admin
+            });
+        }
+        return commands;
+    }
 }
 
-const app = express();
-app.use(express.static(path.join(__dirname, 'smm')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'smm', 'silva.html')));
-app.get('/health', (req, res) => res.send(`✅ ${config.BOT_NAME} is Running!`));
-
-app.listen(port, () => {
-    logMessage('INFO', `🌐 Server running on port ${port}`);
-    logMessage('INFO', `📊 Dashboard available at http://localhost:${port}`);
-});
-
-process.on('uncaughtException', (err) => {
-    logMessage('CRITICAL', `Uncaught Exception: ${err.stack || err.message}`);
-    setTimeout(() => connectToWhatsApp(), 5000);
-});
-process.on('unhandledRejection', (reason, promise) => {
-    logMessage('CRITICAL', `Unhandled Rejection: ${reason} at ${promise}`);
-});
-
-(async () => {
-    try {
-        logMessage('INFO', 'Booting Silva MD Bot...');
-        await connectToWhatsApp();
-    } catch (e) {
-        logMessage('CRITICAL', `Bot Init Failed: ${e.stack || e.message}`);
-        setTimeout(() => connectToWhatsApp(), 5000);
+// ==============================
+// 🤖 MAIN BOT CLASS (FIXED FOR LID OWNER ISSUE)
+// ==============================
+class SilvaBot {
+    constructor() {
+        this.sock = null;
+        this.store = new MessageStore();
+        this.groupCache = new NodeCache({ stdTTL: 300, useClones: false });
+        this.pluginManager = new PluginManager();
+        this.isConnected = false;
+        this.functions = new FunctionsWrapper();
+        
+        // Settings
+        this.antiDeleteEnabled = config.ANTIDELETE || true;
+        this.recentDeletedMessages = [];
+        this.maxDeletedMessages = 20;
+        this.autoStatusView = config.AUTO_STATUS_VIEW || false;
+        this.autoStatusLike = config.AUTO_STATUS_LIKE || false;
+        
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 10;
+        this.reconnectDelay = 5000;
+        this.keepAliveInterval = null;
+        
+        // Built-in commands
+        this.commands = {
+            help: this.helpCommand.bind(this),
+            menu: this.menuCommand.bind(this),
+            ping: this.pingCommand.bind(this),
+            owner: this.ownerCommand.bind(this),
+            stats: this.statsCommand.bind(this),
+            plugins: this.pluginsCommand.bind(this),
+            start: this.startCommand.bind(this),
+            antidelete: this.antideleteCommand.bind(this),
+            statusview: this.statusviewCommand.bind(this)
+        };
     }
-})();
+
+    async init() {
+        try {
+            botLogger.log('BOT', "🚀 Starting " + config.BOT_NAME + " v" + config.VERSION);
+            botLogger.log('INFO', "Mode: " + (config.BOT_MODE || 'public'));
+            botLogger.log('INFO', "Owner: " + (config.OWNER_NUMBER || 'Not configured'));
+            botLogger.log('INFO', "Prefix: " + config.PREFIX);
+            
+            if (config.SESSION_ID) {
+                await loadSession();
+            }
+
+            await this.pluginManager.loadPlugins('silvaxlab');
+            await this.connect();
+        } catch (error) {
+            botLogger.log('ERROR', "Init failed: " + error.message);
+            setTimeout(() => this.init(), 10000);
+        }
+    }
+
+    async connect() {
+        try {
+            this.reconnectAttempts++;
+            
+            if (this.reconnectAttempts > this.maxReconnectAttempts) {
+                botLogger.log('ERROR', 'Max reconnection attempts reached');
+                this.reconnectAttempts = 0;
+                setTimeout(() => this.init(), 30000);
+                return;
+            }
+
+            const { state, saveCreds } = await useMultiFileAuthState('./sessions');
+            const { version } = await fetchLatestBaileysVersion();
+            
+            this.sock = makeWASocket({
+                version,
+                logger: logger,
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, logger)
+                },
+                browser: Browsers.macOS(config.BOT_NAME),
+                markOnlineOnConnect: true,
+                generateHighQualityLinkPreview: true,
+                syncFullHistory: false,
+                defaultQueryTimeoutMs: 60000,
+                cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
+                retryRequestDelayMs: 3000,
+                connectTimeoutMs: 60000,
+                keepAliveIntervalMs: 25000,
+                emitOwnEvents: true,
+                fireInitQueries: true,
+                mobile: false,
+                shouldIgnoreJid: (jid) => {
+                    if (!jid || typeof jid !== 'string') {
+                        return false;
+                    }
+                    return jid === 'status@broadcast' || jid.includes('@newsletter');
+                },
+                getMessage: async (key) => {
+                    try {
+                        return await this.store.getMessage(key);
+                    } catch (error) {
+                        return null;
+                    }
+                },
+                printQRInTerminal: true
+            });
+
+            this.setupEvents(saveCreds);
+            botLogger.log('SUCCESS', '✅ Bot initialized');
+            this.reconnectAttempts = 0;
+        } catch (error) {
+            botLogger.log('ERROR', "Connection error: " + error.message);
+            await this.handleReconnect(error);
+        }
+    }
+
+    async handleReconnect(error) {
+        const delayTime = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
+        botLogger.log('WARNING', "Reconnecting in " + (delayTime/1000) + "s (Attempt " + this.reconnectAttempts + "/" + this.maxReconnectAttempts + ")");
+        
+        await this.functions.sleep(delayTime);
+        await this.connect();
+    }
+
+    setupEvents(saveCreds) {
+        const sock = this.sock;
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
+            
+            if (qr) {
+                botLogger.log('INFO', '📱 QR Code Generated');
+                qrcode.generate(qr, { small: true });
+            }
+
+            if (connection === 'close') {
+                this.isConnected = false;
+                this.stopKeepAlive();
+                
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const reason = lastDisconnect?.error?.message;
+                
+                botLogger.log('WARNING', "Connection closed. Status: " + statusCode + ", Reason: " + reason);
+                
+                if (statusCode === DisconnectReason.loggedOut) {
+                    botLogger.log('ERROR', 'Logged out. Please scan QR again.');
+                    this.cleanupSessions();
+                    setTimeout(() => this.init(), 10000);
+                } else {
+                    await this.handleReconnect(lastDisconnect?.error);
+                }
+            } else if (connection === 'open') {
+                this.isConnected = true;
+                this.reconnectAttempts = 0;
+                botLogger.log('SUCCESS', '🔗 Connected to WhatsApp');
+                
+                // Set bot's connected number
+                if (sock.user && sock.user.id) {
+                    const botNumber = sock.user.id.split(':')[0];
+                    this.functions.setBotNumber(botNumber);
+                    
+                    // Try to detect bot's LID by sending a test message to itself
+                    this.detectBotLid();
+                }
+                
+                this.startKeepAlive();
+                
+                // Send connection message to owner
+                if (config.OWNER_NUMBER) {
+                    try {
+                        await delay(2000);
+
+                        const ownerNumbers = Array.isArray(config.OWNER_NUMBER)
+                            ? config.OWNER_NUMBER
+                            : [config.OWNER_NUMBER];
+
+                        for (const ownerNum of ownerNumbers) {
+                            const ownerJid = this.functions.formatJid(ownerNum);
+                            if (!ownerJid) continue;
+
+                            const now = new Date().toLocaleString();
+
+                            const messageText = `
+✅ *${config.BOT_NAME} Connected!*
+Mode: ${config.BOT_MODE || 'public'}
+Time: ${now}
+Anti-delete: ${this.antiDeleteEnabled ? '✅' : '❌'}
+Connected Number: ${this.functions.botNumber || 'Unknown'}
+                            `.trim();
+
+                            await this.sendMessage(ownerJid, {
+                                text: messageText,
+                                contextInfo: {
+                                    mentionedJid: [ownerJid],
+                                    forwardingScore: 999,
+                                    isForwarded: true,
+                                    forwardedNewsletterMessageInfo: {
+                                        newsletterJid: "120363200367779016@newsletter",
+                                        newsletterName: "SILVA WELCOMES YOU 💖🥰",
+                                        serverMessageId: 143
+                                    }
+                                }
+                            });
+                        }
+                        botLogger.log('INFO', 'Sent connected message to owner(s)');
+                    } catch (error) {
+                        botLogger.log('ERROR', 'Failed to send owner message: ' + error.message);
+                    }
+                }
+            }
+        });
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('messages.upsert', async (m) => {
+            try {
+                const { messages, type } = m;
+                botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
+                
+                // First, handle status updates using the status handler
+                await statusHandler.handle({
+                    messages,
+                    type,
+                    sock,
+                    config,
+                    logMessage: (level, msg) => {
+                        console.log(`[${level}] ${msg}`);
+                    },
+                    unwrapStatus: this.unwrapStatus.bind(this),
+                    saveMedia: this.saveMedia.bind(this)
+                });
+                
+                // Then handle regular messages
+                await this.handleMessages(m);
+            } catch (error) {
+                botLogger.log('ERROR', "Messages upsert error: " + error.message);
+            }
+        });
+
+        // Handle message updates
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
+                try {
+                    if (update.update && (update.update === 'delete' || update.update.messageStubType === 7)) {
+                        await this.handleMessageDelete(update);
+                    }
+                } catch (error) {
+                    botLogger.log('ERROR', "Message update error: " + error.message);
+                }
+            }
+        });
+
+        // Handle message delete events
+        sock.ev.on('messages.delete', async (deletion) => {
+            try {
+                await this.handleBulkMessageDelete(deletion);
+            } catch (error) {
+                botLogger.log('ERROR', "Message delete error: " + error.message);
+            }
+        });
+
+        // Handle group participants updates
+        sock.ev.on('group-participants.update', async (event) => {
+            try {
+                if (this.sock.user && this.sock.user.id) {
+                    const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                    if (event.action === 'add' && event.participants.includes(botJid)) {
+                        await this.sendMessage(event.id, {
+                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
+                        });
+                        botLogger.log('INFO', 'Bot added to group: ' + event.id);
+                    }
+                }
+            } catch (error) {
+                // Silent fail
+            }
+        });
+
+        // Log outgoing messages
+        sock.ev.on('messages.upsert', async (m) => {
+            if (m.type === 'notify') {
+                for (const msg of m.messages || []) {
+                    if (msg.key.fromMe) {
+                        botLogger.log('MESSAGE', `📤 Sent message to: ${msg.key.remoteJid}`);
+                        // If this is a message sent by the bot to itself, we can detect the LID
+                        if (msg.key.remoteJid.includes('@lid') && !this.functions.botLid) {
+                            const lid = msg.key.remoteJid.split('@')[0];
+                            this.functions.setBotLid(lid + '@lid');
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Utility method to unwrap status message
+    unwrapStatus(message) {
+        try {
+            if (message.message?.protocolMessage?.type === 14) {
+                const statusMessage = message.message.protocolMessage;
+                return {
+                    key: message.key,
+                    message: statusMessage,
+                    isStatus: true
+                };
+            }
+            return null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // Utility method to save media
+    async saveMedia(message, filename) {
+        try {
+            if (getContentType(message.message)) {
+                const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+                    logger,
+                    reuploadRequest: this.sock.updateMediaMessage
+                });
+                
+                const tempDir = './temp';
+                if (!fs.existsSync(tempDir)) {
+                    fs.mkdirSync(tempDir, { recursive: true });
+                }
+                
+                const filePath = path.join(tempDir, filename || `media_${Date.now()}.bin`);
+                fs.writeFileSync(filePath, buffer);
+                return filePath;
+            }
+            return null;
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to save media: ' + error.message);
+            return null;
+        }
+    }
+
+    // Detect bot's LID by checking messages sent by the bot
+    async detectBotLid() {
+        try {
+            // Send a test message to ourselves to detect LID
+            if (this.functions.botNumber) {
+                const botJid = this.functions.botNumber + '@s.whatsapp.net';
+                await delay(1000);
+                await this.sock.sendMessage(botJid, {
+                    text: '🤖 *Bot Activated!*\nType ' + config.PREFIX + 'help for commands'
+                });
+                botLogger.log('INFO', 'Test message sent to detect LID');
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Failed to detect bot LID: ' + error.message);
+        }
+    }
+
+    // Handle single message delete
+    async handleMessageDelete(update) {
+        if (!this.antiDeleteEnabled || !update.key) return;
+        
+        try {
+            const deletedMessage = await this.store.getMessage(update.key);
+            if (deletedMessage && !deletedMessage.key?.fromMe) {
+                await this.store.saveDeletedMessage(update.key, deletedMessage);
+                
+                const sender = deletedMessage.key.participant || deletedMessage.key.remoteJid;
+                const text = this.functions.extractText(deletedMessage.message);
+                
+                if (text || deletedMessage.message) {
+                    this.recentDeletedMessages.unshift({
+                        key: update.key,
+                        sender: sender,
+                        senderName: await this.getContactName(sender),
+                        text: text,
+                        message: deletedMessage.message,
+                        timestamp: deletedMessage.messageTimestamp,
+                        deletedAt: Date.now()
+                    });
+                    
+                    if (this.recentDeletedMessages.length > this.maxDeletedMessages) {
+                        this.recentDeletedMessages.pop();
+                    }
+                    
+                    const jid = update.key.remoteJid;
+                    if (jid.endsWith('@g.us')) {
+                        await this.sock.sendMessage(jid, {
+                            text: `🚨 *Message Deleted*\n\n` +
+                                  `👤 *Sender:* @${sender.split('@')[0]}\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
+                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`,
+                            mentions: [sender]
+                        });
+                    } else {
+                        await this.sock.sendMessage(jid, {
+                            text: `🚨 *You deleted a message*\n\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
+                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`
+                        });
+                    }
+                    
+                    botLogger.log('INFO', 'Anti-delete: Saved deleted message from ' + sender);
+                }
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Anti-delete error: ' + error.message);
+        }
+    }
+
+    // Handle bulk message delete
+    async handleBulkMessageDelete(deletion) {
+        if (!this.antiDeleteEnabled) return;
+        
+        try {
+            if (deletion.keys && Array.isArray(deletion.keys)) {
+                for (const key of deletion.keys) {
+                    await this.handleMessageDelete({ key: key });
+                }
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Bulk delete error: ' + error.message);
+        }
+    }
+
+    // Get contact name
+    async getContactName(jid) {
+        try {
+            const contact = await this.sock.onWhatsApp(jid);
+            return contact && contact[0] ? contact[0].name || contact[0].jid.split('@')[0] : jid.split('@')[0];
+        } catch {
+            return jid.split('@')[0];
+        }
+    }
+
+    startKeepAlive() {
+        this.stopKeepAlive();
+        this.keepAliveInterval = setInterval(async () => {
+            if (this.sock && this.isConnected) {
+                try {
+                    await this.sock.sendPresenceUpdate('available');
+                } catch (error) {
+                    // Silent fail
+                }
+            }
+        }, 20000);
+    }
+
+    stopKeepAlive() {
+        if (this.keepAliveInterval) {
+            clearInterval(this.keepAliveInterval);
+            this.keepAliveInterval = null;
+        }
+    }
+
+    cleanupSessions() {
+        try {
+            const sessionsDir = './sessions';
+            if (fs.existsSync(sessionsDir)) {
+                fs.rmSync(sessionsDir, { recursive: true, force: true });
+                fs.mkdirSync(sessionsDir, { recursive: true });
+                botLogger.log('INFO', 'Sessions cleaned');
+            }
+        } catch (error) {
+            // Silent fail
+        }
+    }
+
+    // FIXED: Handle owner messages correctly with LID support
+    async handleMessages(m) {
+        if (!m.messages || !Array.isArray(m.messages)) {
+            return;
+        }
+        
+        for (const message of m.messages) {
+            try {
+                // Skip status broadcasts and newsletter messages
+                if (message.key.remoteJid === 'status@broadcast' || 
+                    message.key.remoteJid.includes('@newsletter') ||
+                    message.key.remoteJid.includes('@broadcast')) {
+                    continue;
+                }
+
+                // Store message
+                await this.store.setMessage(message.key, message);
+
+                const jid = message.key.remoteJid;
+                const sender = message.key.participant || jid;
+                const isGroup = jid.endsWith('@g.us');
+                const isFromMe = message.key.fromMe;
+                
+                // Log ALL messages
+                botLogger.log('MESSAGE', `📨 Message from: ${sender} (FromMe: ${isFromMe}, Group: ${isGroup})`);
+                
+                // If message is fromMe and we don't have bot LID yet, store it
+                if (isFromMe && sender.includes('@lid') && !this.functions.botLid) {
+                    const lid = sender.split('@')[0];
+                    this.functions.setBotLid(lid + '@lid');
+                }
+
+                // Extract text from message
+                let text = '';
+                if (message.message?.conversation) {
+                    text = message.message.conversation;
+                } else if (message.message?.extendedTextMessage?.text) {
+                    text = message.message.extendedTextMessage.text;
+                } else if (message.message?.imageMessage?.caption) {
+                    text = message.message.imageMessage.caption;
+                } else if (message.message?.videoMessage?.caption) {
+                    text = message.message.videoMessage.caption;
+                } else if (message.message?.documentMessage?.caption) {
+                    text = message.message.documentMessage.caption;
+                } else if (message.message?.audioMessage) {
+                    text = message.message.audioMessage?.caption || '';
+                }
+                
+                if (text) {
+                    botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
+                }
+
+                // Check if message starts with prefix
+                if (text && text.startsWith(config.PREFIX)) {
+                    botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${sender}`);
+                    
+                    // SPECIAL FIX: If message is fromMe, automatically treat as owner
+                    const isOwner = isFromMe ? true : this.functions.isOwner(sender);
+                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
+                    
+                    const cmdText = text.slice(config.PREFIX.length).trim();
+                    
+                    // Send typing indicator
+                    await this.sock.sendPresenceUpdate('composing', jid);
+                    
+                    // Try plugin commands first
+                    const executed = await this.pluginManager.executeCommand({
+                        text: cmdText,
+                        jid,
+                        sender,
+                        isGroup,
+                        args: cmdText.split(/ +/).slice(1),
+                        message,
+                        sock: this.sock,
+                        bot: this
+                    });
+                    
+                    // Stop typing indicator
+                    await this.sock.sendPresenceUpdate('paused', jid);
+                    
+                    // If no plugin handled it, try built-in commands
+                    if (!executed) {
+                        const args = cmdText.split(/ +/);
+                        const command = args.shift().toLowerCase();
+                        
+                        if (this.commands[command]) {
+                            botLogger.log('COMMAND', `🛠️ Executing built-in command: ${command} for ${sender}`);
+                            await this.commands[command]({
+                                jid,
+                                sender,
+                                isGroup,
+                                args,
+                                message,
+                                sock: this.sock,
+                                bot: this
+                            });
+                        } else {
+                            // Auto reply for unknown commands
+                            if (config.AUTO_REPLY) {
+                                await this.sock.sendMessage(jid, {
+                                    text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
+                                }, { quoted: message });
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                botLogger.log('ERROR', "Message handling error: " + error.message);
+                botLogger.log('ERROR', "Stack: " + error.stack);
+            }
+        }
+    }
+
+    // ==============================
+    // 💬 COMMAND HANDLERS (FIXED FOR FROM_ME MESSAGES)
+    // ==============================
+    
+    async antideleteCommand(context) {
+        const { jid, sock, message, args, sender } = context;
+        // FIX: If message is fromMe, treat as owner
+        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
+        
+        if (!args[0]) {
+            const status = this.antiDeleteEnabled ? '✅ Enabled' : '❌ Disabled';
+            await sock.sendMessage(jid, {
+                text: '🚨 *Anti-Delete System*\n\n' +
+                      `Status: ${status}\n` +
+                      `Stored Messages: ${this.recentDeletedMessages.length}\n\n` +
+                      `• \`${config.PREFIX}antidelete on\` - Enable (Owner only)\n` +
+                      `• \`${config.PREFIX}antidelete off\` - Disable (Owner only)\n` +
+                      `• \`${config.PREFIX}antidelete list\` - Show recent\n` +
+                      `• \`${config.PREFIX}antidelete recover [num]\` - Recover message`
+            }, { quoted: message });
+            return;
+        }
+        
+        const action = args[0].toLowerCase();
+        
+        switch(action) {
+            case 'on':
+                if (!isOwner) {
+                    await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                    return;
+                }
+                this.antiDeleteEnabled = true;
+                await sock.sendMessage(jid, {
+                    text: '✅ Anti-delete enabled!'
+                }, { quoted: message });
+                break;
+                
+            case 'off':
+                if (!isOwner) {
+                    await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+                    return;
+                }
+                this.antiDeleteEnabled = false;
+                await sock.sendMessage(jid, {
+                    text: '❌ Anti-delete disabled.'
+                }, { quoted: message });
+                break;
+                
+            case 'list':
+                if (this.recentDeletedMessages.length > 0) {
+                    let listText = '📋 *Recently Deleted Messages*\n\n';
+                    this.recentDeletedMessages.forEach((msg, index) => {
+                        const timeAgo = Math.floor((Date.now() - msg.deletedAt) / 1000);
+                        listText += `${index + 1}. ${msg.senderName} - ${timeAgo}s ago\n`;
+                        if (msg.text && msg.text.length > 50) {
+                            listText += `   ${msg.text.substring(0, 50)}...\n`;
+                        } else if (msg.text) {
+                            listText += `   ${msg.text}\n`;
+                        }
+                    });
+                    listText += '\nUse `' + config.PREFIX + 'antidelete recover [number]` to recover.';
+                    await sock.sendMessage(jid, { text: listText }, { quoted: message });
+                } else {
+                    await sock.sendMessage(jid, {
+                        text: 'No deleted messages stored.'
+                    }, { quoted: message });
+                }
+                break;
+                
+            case 'recover':
+                const index = parseInt(args[1]) - 1;
+                if (index >= 0 && index < this.recentDeletedMessages.length) {
+                    const deletedMsg = this.recentDeletedMessages[index];
+                    
+                    if (deletedMsg.message) {
+                        await sock.sendMessage(jid, {
+                            forward: deletedMsg.message,
+                            contextInfo: {
+                                mentionedJid: [deletedMsg.sender],
+                                forwardingScore: 999,
+                                isForwarded: true
+                            }
+                        });
+                        
+                        await sock.sendMessage(jid, {
+                            text: `🔁 *Message Recovered*\n\nFrom: ${deletedMsg.senderName}\nDeleted: ${Math.floor((Date.now() - deletedMsg.deletedAt) / 1000)}s ago`
+                        }, { quoted: message });
+                    } else if (deletedMsg.text) {
+                        await sock.sendMessage(jid, {
+                            text: `🔁 *Message Recovered*\n\nFrom: ${deletedMsg.senderName}\n\n${deletedMsg.text}`,
+                            mentions: [deletedMsg.sender]
+                        }, { quoted: message });
+                    }
+                    
+                    this.recentDeletedMessages.splice(index, 1);
+                } else {
+                    await sock.sendMessage(jid, {
+                        text: 'Invalid message number. Use `' + config.PREFIX + 'antidelete list` to see available messages.'
+                    }, { quoted: message });
+                }
+                break;
+                
+            default:
+                await sock.sendMessage(jid, {
+                    text: 'Invalid option. Use `' + config.PREFIX + 'antidelete` for help.'
+                }, { quoted: message });
+        }
+    }
+    
+    async statusviewCommand(context) {
+        const { jid, sock, message, args, sender } = context;
+        // FIX: If message is fromMe, treat as owner
+        const isOwner = message.key.fromMe ? true : this.functions.isOwner(sender);
+        
+        if (!isOwner) {
+            await sock.sendMessage(jid, { text: '⚠️ Owner only command' }, { quoted: message });
+            return;
+        }
+        
+        const action = args[0]?.toLowerCase();
+        
+        if (!action) {
+            await sock.sendMessage(jid, {
+                text: `📊 *Status Auto Settings*\n\n` +
+                      `Auto View: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}\n` +
+                      `Auto Like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}\n\n` +
+                      `Commands:\n` +
+                      `• ${config.PREFIX}statusview on - Enable both\n` +
+                      `• ${config.PREFIX}statusview off - Disable both\n` +
+                      `• ${config.PREFIX}statusview view - Toggle auto-view\n` +
+                      `• ${config.PREFIX}statusview like - Toggle auto-like`
+            }, { quoted: message });
+            return;
+        }
+        
+        switch(action) {
+            case 'on':
+                this.autoStatusView = true;
+                this.autoStatusLike = true;
+                await sock.sendMessage(jid, {
+                    text: '✅ Auto-view and auto-like enabled for status updates.'
+                }, { quoted: message });
+                break;
+                
+            case 'off':
+                this.autoStatusView = false;
+                this.autoStatusLike = false;
+                await sock.sendMessage(jid, {
+                    text: '❌ Auto-view and auto-like disabled.'
+                }, { quoted: message });
+                break;
+                
+            case 'view':
+                this.autoStatusView = !this.autoStatusView;
+                await sock.sendMessage(jid, {
+                    text: `Auto-view: ${this.autoStatusView ? '✅ Enabled' : '❌ Disabled'}`
+                }, { quoted: message });
+                break;
+                
+            case 'like':
+                this.autoStatusLike = !this.autoStatusLike;
+                await sock.sendMessage(jid, {
+                    text: `Auto-like: ${this.autoStatusLike ? '✅ Enabled' : '❌ Disabled'}`
+                }, { quoted: message });
+                break;
+                
+            default:
+                await sock.sendMessage(jid, {
+                    text: 'Invalid option. Use `' + config.PREFIX + 'statusview` for help.'
+                }, { quoted: message });
+        }
+    }
+
+    async helpCommand(context) {
+        const { jid, sock, message } = context;
+        const plugins = this.pluginManager.getCommandList();
+        
+        let helpText = '*Silva MD Help Menu*\n\n';
+        helpText += 'Prefix: ' + config.PREFIX + '\n';
+        helpText += 'Mode: ' + (config.BOT_MODE || 'public') + '\n\n';
+        helpText += '*Built-in Commands:*\n';
+        helpText += '• ' + config.PREFIX + 'help - This menu\n';
+        helpText += '• ' + config.PREFIX + 'menu - Main menu\n';
+        helpText += '• ' + config.PREFIX + 'ping - Check status\n';
+        helpText += '• ' + config.PREFIX + 'owner - Owner info\n';
+        helpText += '• ' + config.PREFIX + 'plugins - List plugins\n';
+        helpText += '• ' + config.PREFIX + 'stats - Bot statistics\n';
+        helpText += '• ' + config.PREFIX + 'antidelete - Recover deleted messages\n';
+        helpText += '• ' + config.PREFIX + 'statusview - Auto status settings (Owner)\n';
+        
+        if (plugins.length > 0) {
+            helpText += '\n*Loaded Plugins:*\n';
+            for (const cmd of plugins) {
+                helpText += '• ' + config.PREFIX + cmd.command + ' - ' + cmd.help + '\n';
+            }
+        }
+        
+        helpText += '\n📍 *Silva Tech Nexus*';
+        
+        await sock.sendMessage(jid, { text: helpText }, { quoted: message });
+    }
+
+    async menuCommand(context) {
+        const { jid, sock, message } = context;
+        const menuText = '┌─「 *Silva MD* 」─\n' +
+                        '│\n' +
+                        '│ ⚡ *BOT STATUS*\n' +
+                        '│ • Mode: ' + (config.BOT_MODE || 'public') + '\n' +
+                        '│ • Prefix: ' + config.PREFIX + '\n' +
+                        '│ • Version: ' + config.VERSION + '\n' +
+                        '│ • Anti-delete: ' + (this.antiDeleteEnabled ? '✅' : '❌') + '\n' +
+                        '│\n' +
+                        '│ 📋 *CORE COMMANDS*\n' +
+                        '│ • ' + config.PREFIX + 'ping - Check bot status\n' +
+                        '│ • ' + config.PREFIX + 'help - Show help\n' +
+                        '│ • ' + config.PREFIX + 'owner - Show owner info\n' +
+                        '│ • ' + config.PREFIX + 'menu - This menu\n' +
+                        '│ • ' + config.PREFIX + 'plugins - List plugins\n' +
+                        '│ • ' + config.PREFIX + 'stats - Bot statistics\n' +
+                        '│ • ' + config.PREFIX + 'antidelete - Recover deleted messages\n' +
+                        '│\n' +
+                        '│ 🎨 *MEDIA COMMANDS*\n' +
+                        '│ • ' + config.PREFIX + 'sticker - Create sticker\n' +
+                        '│\n' +
+                        '│ └─「 *SILVA TECH* 」';
+        
+        await sock.sendMessage(jid, { text: menuText }, { quoted: message });
+    }
+
+    async pingCommand(context) {
+        const { jid, sock, message } = context;
+        const start = Date.now();
+        await sock.sendMessage(jid, { text: '🏓 Pong!' }, { quoted: message });
+        const latency = Date.now() - start;
+        
+        await sock.sendMessage(jid, {
+            text: '*Status Report*\n\n⚡ Latency: ' + latency + 'ms\n📊 Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n💾 RAM: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n🌐 Connection: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n🚨 Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n🤖 Bot Number: ' + (this.functions.botNumber || 'Unknown') + '\n🔑 Bot LID: ' + (this.functions.botLid || 'Not detected')
+        }, { quoted: message });
+    }
+
+    async ownerCommand(context) {
+        const { jid, sock, message } = context;
+        let ownerText = '👑 *Bot Owner*\n\n';
+        
+        if (this.functions.botNumber) {
+            ownerText += `🤖 Connected Bot: ${this.functions.botNumber}\n`;
+        }
+        
+        if (this.functions.botLid) {
+            ownerText += `🔑 Bot LID: ${this.functions.botLid}\n`;
+        }
+        
+        if (config.OWNER_NUMBER) {
+            if (Array.isArray(config.OWNER_NUMBER)) {
+                config.OWNER_NUMBER.forEach((num, idx) => {
+                    ownerText += `📞 Owner ${idx + 1}: ${num}\n`;
+                });
+            } else {
+                ownerText += `📞 Owner: ${config.OWNER_NUMBER}\n`;
+            }
+        }
+        
+        ownerText += `⚡ ${config.BOT_NAME} v${config.VERSION}`;
+        
+        await sock.sendMessage(jid, {
+            text: ownerText
+        }, { quoted: message });
+    }
+
+    async statsCommand(context) {
+        const { jid, sock, message } = context;
+        const statsText = '📊 *Bot Statistics*\n\n' +
+                         '⏱️ Uptime: ' + (process.uptime() / 3600).toFixed(2) + 'h\n' +
+                         '💾 Memory: ' + (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + 'MB\n' +
+                         '📦 Platform: ' + process.platform + '\n' +
+                         '🔌 Plugins: ' + this.pluginManager.getCommandList().length + '\n' +
+                         '🚨 Deleted Msgs: ' + this.recentDeletedMessages.length + '\n' +
+                         '👁️ Auto-View: ' + (this.autoStatusView ? '✅' : '❌') + '\n' +
+                         '❤️ Auto-Like: ' + (this.autoStatusLike ? '✅' : '❌') + '\n' +
+                         '🌐 Status: ' + (this.isConnected ? 'Connected ✅' : 'Disconnected ❌') + '\n' +
+                         '🤖 Bot: ' + config.BOT_NAME + ' v' + config.VERSION + '\n' +
+                         '📱 Connected as: ' + (this.functions.botNumber || 'Unknown') + '\n' +
+                         '🔑 Bot LID: ' + (this.functions.botLid || 'Not detected');
+        
+        await sock.sendMessage(jid, { text: statsText }, { quoted: message });
+    }
+
+    async pluginsCommand(context) {
+        const { jid, sock, message } = context;
+        const plugins = this.pluginManager.getCommandList();
+        let pluginsText = '📦 *Loaded Plugins*\n\nTotal: ' + plugins.length + '\n\n';
+        
+        if (plugins.length === 0) {
+            pluginsText += 'No plugins loaded.\nCheck silvaxlab folder.';
+        } else {
+            for (const plugin of plugins) {
+                pluginsText += '• ' + config.PREFIX + plugin.command + ' - ' + plugin.help + '\n';
+            }
+        }
+        
+        await sock.sendMessage(jid, { text: pluginsText }, { quoted: message });
+    }
+
+    async startCommand(context) {
+        const { jid, sock, message } = context;
+        const startText = '✨ *Welcome to Silva MD!*\n\n' +
+                         'I am an advanced WhatsApp bot with plugin support.\n\n' +
+                         'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
+                         'Prefix: ' + config.PREFIX + '\n' +
+                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
+                         'Type ' + config.PREFIX + 'help for commands';
+        
+        await sock.sendMessage(jid, { 
+            text: startText
+        }, { quoted: message });
+    }
+
+    async sendMessage(jid, content, options = {}) {
+        try {
+            if (this.sock && this.isConnected) {
+                botLogger.log('MESSAGE', `📤 Sending message to: ${jid}`);
+                const result = await this.sock.sendMessage(jid, content, { ...globalContextInfo, ...options });
+                botLogger.log('MESSAGE', `✅ Message sent successfully to: ${jid}`);
+                return result;
+            } else {
+                botLogger.log('WARNING', 'Cannot send message: Bot not connected');
+                return null;
+            }
+        } catch (error) {
+            botLogger.log('ERROR', "Send error: " + error.message);
+            return null;
+        }
+    }
+}
+
+// ==============================
+// 🚀 BOT INSTANCE CREATION
+// ==============================
+const bot = new SilvaBot();
+
+// Export bot instance for index.js
+module.exports = {
+    bot,
+    config,
+    logger: botLogger,
+    functions: new FunctionsWrapper()
+};
+
+// ==============================
+// 🛡️ ERROR HANDLERS
+// ==============================
+process.on('uncaughtException', (error) => {
+    botLogger.log('ERROR', `Uncaught Exception: ${error.message}`);
+    botLogger.log('ERROR', `Stack: ${error.stack}`);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    botLogger.log('ERROR', `Unhandled Rejection at: ${promise}, reason: ${reason}`);
+});
