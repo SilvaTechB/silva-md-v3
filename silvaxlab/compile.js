@@ -1,5 +1,4 @@
-
-// Multi-Language Code Compiler Plugin  Silva MD Bot
+// Multi-Language Code Compiler Plugin - Silva MD Bot
 const config = require('../config')
 const axios = require('axios')
 
@@ -92,34 +91,34 @@ const handler = {
 }
 
 // ========================================
-// COMPILE CODE USING JDoodle API
+// COMPILE CODE USING Piston API (Free & No Auth Required)
 // ========================================
 async function compileCode(language, code) {
-    // Map language aliases to JDoodle language codes
+    // Map language aliases to Piston language codes
     const languageMap = {
         // Python
-        'py': 'python3',
-        'python': 'python3',
-        'python3': 'python3',
-        'python2': 'python2',
+        'py': 'python',
+        'python': 'python',
+        'python3': 'python',
+        'python2': 'python',
         
         // JavaScript
-        'js': 'nodejs',
-        'javascript': 'nodejs',
-        'node': 'nodejs',
-        'nodejs': 'nodejs',
+        'js': 'javascript',
+        'javascript': 'javascript',
+        'node': 'javascript',
+        'nodejs': 'javascript',
         
         // TypeScript
-        'ts': 'nodejs',
-        'typescript': 'nodejs',
+        'ts': 'typescript',
+        'typescript': 'typescript',
         
         // Java
         'java': 'java',
         
         // C/C++
         'c': 'c',
-        'cpp': 'cpp17',
-        'c++': 'cpp17',
+        'cpp': 'c++',
+        'c++': 'c++',
         'csharp': 'csharp',
         'cs': 'csharp',
         
@@ -152,24 +151,25 @@ async function compileCode(language, code) {
         'bash': 'bash',
         'shell': 'bash',
         'sh': 'bash',
-        'sql': 'sql',
-        'vb': 'vbn',
     }
 
-    const jdoodleLanguage = languageMap[language.toLowerCase()]
+    const pistonLanguage = languageMap[language.toLowerCase()]
 
-    if (!jdoodleLanguage) {
+    if (!pistonLanguage) {
         throw new Error(`Unsupported language: ${language}\n\nSupported: python, js, java, c, cpp, go, rust, php, ruby, swift, kotlin, etc.`)
     }
 
     try {
-        // Using JDoodle API (Free tier)
-        const response = await axios.post('https://api.jdoodle.com/v1/execute', {
-            clientId: '4b2ec22b2642d9934a357c874ae6d7d', // Free public client ID
-            clientSecret: 'e3d1fc82d9d38bbd732e5a820c3c3c6c1e4b3b9e4f5d4c1e6b7e9f2a5c8d1f3', // Free public secret
-            script: code,
-            language: jdoodleLanguage,
-            versionIndex: '0' // Latest version
+        // Using Piston API (Free, no authentication required)
+        const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
+            language: pistonLanguage,
+            version: '*', // Use latest version
+            files: [
+                {
+                    name: getFileName(pistonLanguage),
+                    content: code
+                }
+            ]
         }, {
             headers: {
                 'Content-Type': 'application/json'
@@ -177,17 +177,18 @@ async function compileCode(language, code) {
             timeout: 30000 // 30 second timeout
         })
 
-        const { output, statusCode, memory, cpuTime, error } = response.data
+        const { run } = response.data
 
-        if (error) {
-            return formatError(language, error)
+        if (run.stderr && run.stderr.trim()) {
+            return formatError(language, run.stderr, run.stdout)
         }
 
-        return formatOutput(language, output, statusCode, memory, cpuTime)
+        return formatOutput(language, run.stdout, run.code, run.signal)
 
     } catch (error) {
         if (error.response) {
-            throw new Error(`API Error: ${error.response.data?.error || error.response.statusText}`)
+            const errorMsg = error.response.data?.message || error.response.statusText
+            throw new Error(`API Error: ${errorMsg}`)
         } else if (error.code === 'ECONNABORTED') {
             throw new Error('Compilation timeout - code took too long to execute')
         } else {
@@ -197,19 +198,46 @@ async function compileCode(language, code) {
 }
 
 // ========================================
+// GET FILE NAME FOR LANGUAGE
+// ========================================
+function getFileName(language) {
+    const fileNames = {
+        'python': 'main.py',
+        'javascript': 'main.js',
+        'typescript': 'main.ts',
+        'java': 'Main.java',
+        'c': 'main.c',
+        'c++': 'main.cpp',
+        'csharp': 'Main.cs',
+        'go': 'main.go',
+        'rust': 'main.rs',
+        'php': 'main.php',
+        'ruby': 'main.rb',
+        'swift': 'main.swift',
+        'kotlin': 'Main.kt',
+        'r': 'main.r',
+        'scala': 'Main.scala',
+        'perl': 'main.pl',
+        'bash': 'main.sh'
+    }
+
+    return fileNames[language] || 'main.txt'
+}
+
+// ========================================
 // FORMAT OUTPUT
 // ========================================
-function formatOutput(language, output, statusCode, memory, cpuTime) {
+function formatOutput(language, output, exitCode, signal) {
     const langName = getLanguageName(language)
-    const status = statusCode === 200 ? '✅ SUCCESS' : '⚠️ WARNING'
+    const status = exitCode === 0 ? '✅ SUCCESS' : '⚠️ WARNING'
 
     let result = `┏━━━━━━━━━━━━━━━━━━━━┓
 ┃   ${status.padEnd(18)} ┃
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 🔤 Language: ${langName}
-⏱️ CPU Time: ${cpuTime || 'N/A'}
-💾 Memory: ${memory || 'N/A'}
+📊 Exit Code: ${exitCode}
+${signal ? `⚡ Signal: ${signal}` : ''}
 
 📤 OUTPUT:
 ${'-'.repeat(40)}
@@ -222,10 +250,10 @@ ${'-'.repeat(40)}`
 // ========================================
 // FORMAT ERROR
 // ========================================
-function formatError(language, error) {
+function formatError(language, stderr, stdout) {
     const langName = getLanguageName(language)
 
-    return `┏━━━━━━━━━━━━━━━━━━━━┓
+    let result = `┏━━━━━━━━━━━━━━━━━━━━┓
 ┃   ❌ ERROR         ┃
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
@@ -233,8 +261,17 @@ function formatError(language, error) {
 
 📛 ERROR:
 ${'-'.repeat(40)}
-${error.trim()}
+${stderr.trim()}
 ${'-'.repeat(40)}`
+
+    if (stdout && stdout.trim()) {
+        result += `\n\n📤 STDOUT:
+${'-'.repeat(40)}
+${stdout.trim()}
+${'-'.repeat(40)}`
+    }
+
+    return result
 }
 
 // ========================================
@@ -273,9 +310,7 @@ function getLanguageName(lang) {
         'perl': 'Perl',
         'bash': 'Bash',
         'shell': 'Shell',
-        'sh': 'Shell',
-        'sql': 'SQL',
-        'vb': 'Visual Basic'
+        'sh': 'Shell'
     }
 
     return names[lang.toLowerCase()] || lang.toUpperCase()
@@ -301,7 +336,10 @@ ${config.PREFIX}compile-<lang> <code>
 • ${config.PREFIX}compile py print("Hello World")
 • ${config.PREFIX}compile-py print("Hello")
 • ${config.PREFIX}compile js console.log("Hello")
-• ${config.PREFIX}compile-java public class Main { public static void main(String[] args) { System.out.println("Hello"); } }
+• ${config.PREFIX}compile-js console.log("Test")
+• ${config.PREFIX}compile cpp #include <iostream>
+using namespace std;
+int main() { cout << "Hello"; }
 
 sᴜᴘᴘᴏʀᴛᴇᴅ ʟᴀɴɢᴜᴀɢᴇs:
 • Python → py, python
@@ -321,12 +359,11 @@ sᴜᴘᴘᴏʀᴛᴇᴅ ʟᴀɴɢᴜᴀɢᴇs:
 • Scala → scala
 • Perl → perl
 • Bash → bash, shell, sh
-• SQL → sql
 
 💡 ᴛɪᴘs:
 • Enclose multi-line code in triple backticks
 • Maximum execution time: 30 seconds
-• Free tier has rate limits
+• Powered by Piston API (free & open source)
 
 ᴇxᴀᴍᴘʟᴇ ᴡɪᴛʜ ᴄᴏᴅᴇ ʙʟᴏᴄᴋ:
 ${config.PREFIX}compile py \`\`\`
