@@ -1,5 +1,5 @@
 
-// Multi-Language Code Compiler Plugin - Silva MD Bot
+// Multi-Language Code Compiler Plugin  Silva MD Bot
 const config = require('../config')
 const axios = require('axios')
 
@@ -12,7 +12,7 @@ const handler = {
     botAdmin: false,
     owner: false,
 
-    execute: async ({ jid, sock, message, args, command }) => {
+    execute: async ({ jid, sock, message, args }) => {
         const sender = message.key.participant || message.key.remoteJid
 
         try {
@@ -20,17 +20,28 @@ const handler = {
             const fullText = message.message?.conversation || 
                            message.message?.extendedTextMessage?.text || ''
 
+            // Extract command from the message
+            const cmd = fullText.trim().split(' ')[0].replace(config.PREFIX, '')
+            const command = cmd.toLowerCase()
+
+            // Check if user wants help
+            if (args[0]?.toLowerCase() === 'help' || !fullText.includes(' ')) {
+                return sendHelp(sock, jid, message, sender)
+            }
+
             // Extract language and code
             let language = ''
             let code = ''
 
             // Check if command specifies language (e.g., compile-py, compile-js)
-            const cmdMatch = command.match(/compile-(\w+)/)
+            const cmdMatch = command.match(/^(compile|run|code)-(py|python|js|javascript|java|cpp|c|go|rust|php|rb|swift|kt|ts|node|nodejs)$/)
+            
             if (cmdMatch) {
-                language = cmdMatch[1]
+                // Language-specific command
+                language = cmdMatch[2]
                 code = fullText.replace(new RegExp(`^${config.PREFIX}${command}\\s*`, 'i'), '').trim()
             } else {
-                // Parse format: .compile <language> <code>
+                // Generic compile command: .compile <language> <code>
                 const parts = fullText.replace(new RegExp(`^${config.PREFIX}${command}\\s*`, 'i'), '').trim()
                 const firstSpace = parts.indexOf(' ')
                 
@@ -148,7 +159,7 @@ async function compileCode(language, code) {
     const jdoodleLanguage = languageMap[language.toLowerCase()]
 
     if (!jdoodleLanguage) {
-        throw new Error(`Unsupported language: ${language}\n\nSupported: ${Object.keys(languageMap).join(', ')}`)
+        throw new Error(`Unsupported language: ${language}\n\nSupported: python, js, java, c, cpp, go, rust, php, ruby, swift, kotlin, etc.`)
     }
 
     try {
@@ -280,40 +291,49 @@ async function sendHelp(sock, jid, message, sender) {
 
 🚀 Compile and run code in multiple languages!
 
-ᴜsᴀɢᴇ:
+ᴜsᴀɢᴇ ᴍᴇᴛʜᴏᴅ 1:
 ${config.PREFIX}compile <language> <code>
+
+ᴜsᴀɢᴇ ᴍᴇᴛʜᴏᴅ 2:
 ${config.PREFIX}compile-<lang> <code>
 
 ᴇxᴀᴍᴘʟᴇs:
-${config.PREFIX}compile py print("Hello World")
-${config.PREFIX}compile-py print("Hello")
-${config.PREFIX}compile js console.log("Hello")
-${config.PREFIX}compile java public class Main { public static void main(String[] args) { System.out.println("Hello"); } }
+• ${config.PREFIX}compile py print("Hello World")
+• ${config.PREFIX}compile-py print("Hello")
+• ${config.PREFIX}compile js console.log("Hello")
+• ${config.PREFIX}compile-java public class Main { public static void main(String[] args) { System.out.println("Hello"); } }
 
 sᴜᴘᴘᴏʀᴛᴇᴅ ʟᴀɴɢᴜᴀɢᴇs:
-• Python (py, python)
-• JavaScript (js, node, nodejs)
-• TypeScript (ts, typescript)
-• Java (java)
-• C/C++ (c, cpp, c++)
-• C# (csharp, cs)
-• Go (go, golang)
-• Rust (rust, rs)
-• PHP (php)
-• Ruby (ruby, rb)
-• Swift (swift)
-• Kotlin (kotlin, kt)
-• R (r)
-• Scala (scala)
-• Perl (perl)
-• Bash (bash, shell, sh)
-• SQL (sql)
+• Python → py, python
+• JavaScript → js, node, nodejs
+• TypeScript → ts, typescript
+• Java → java
+• C → c
+• C++ → cpp, c++
+• C# → cs, csharp
+• Go → go, golang
+• Rust → rust, rs
+• PHP → php
+• Ruby → ruby, rb
+• Swift → swift
+• Kotlin → kotlin, kt
+• R → r
+• Scala → scala
+• Perl → perl
+• Bash → bash, shell, sh
+• SQL → sql
 
 💡 ᴛɪᴘs:
-• Use code blocks for multi-line code
-• Enclose code in \`\`\` for better formatting
+• Enclose multi-line code in triple backticks
 • Maximum execution time: 30 seconds
-• Free tier has rate limits`
+• Free tier has rate limits
+
+ᴇxᴀᴍᴘʟᴇ ᴡɪᴛʜ ᴄᴏᴅᴇ ʙʟᴏᴄᴋ:
+${config.PREFIX}compile py \`\`\`
+def greet(name):
+    return f"Hello {name}"
+print(greet("World"))
+\`\`\``
 
     return sock.sendMessage(jid, {
         text: helpText,
