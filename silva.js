@@ -552,8 +552,8 @@ class SilvaBot {
         this.antiDeleteEnabled = config.ANTIDELETE || true;
         this.recentDeletedMessages = [];
         this.maxDeletedMessages = 20;
-        this.autoStatusView = config.AUTO_STATUS_VIEW || false;
-        this.autoStatusLike = config.AUTO_STATUS_LIKE || false;
+        this.autoStatusView = config.AUTO_STATUS_VIEW || config.AUTO_STATUS_SEEN || false;
+        this.autoStatusLike = config.AUTO_STATUS_LIKE || config.AUTO_STATUS_REACT || false;
         
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
@@ -586,7 +586,16 @@ class SilvaBot {
             }
 
             await this.pluginManager.loadPlugins('silvaxlab');
+            
+            // Initialize Anti-delete Handler
+            const antiDelete = require('./lib/antidelete.js');
+            
             await this.connect();
+            
+            // Setup anti-delete after connection is initialized in connect()
+            if (this.sock) {
+                antiDelete.setup(this.sock, config);
+            }
         } catch (error) {
             botLogger.log('ERROR', "Init failed: " + error.message);
             setTimeout(() => this.init(), 10000);
