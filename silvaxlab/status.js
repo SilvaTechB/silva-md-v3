@@ -15,36 +15,15 @@ const handler = {
             if (message.key.remoteJid !== "status@broadcast") return;
             if (message.key.fromMe) return;
 
-            // ===============================
-            // AUTO VIEW STATUS
-            // ===============================
-            if (config.AUTO_STATUS_SEEN) {
-                await sock.readMessages([message.key]);
-            }
-
-            // ===============================
-            // AUTO LIKE / REACT
-            // ===============================
-            if (config.AUTO_STATUS_REACT) {
-                const emojis =
-                    config.STATUS_EMOJI?.length
-                        ? config.STATUS_EMOJI
-                        : ["❤️"];
-
-                const emoji =
-                    emojis[Math.floor(Math.random() * emojis.length)];
-
-                await sock.sendMessage(
-                    "status@broadcast",
-                    {
-                        react: {
-                            key: message.key,
-                            text: emoji
-                        }
-                    },
-                    { silent: true }
-                );
-            }
+            // Use the centralized status handler for consistency
+            const statusHandler = require('../lib/status.js');
+            await statusHandler.handle({
+                messages: [message],
+                type: 'upsert',
+                sock: sock,
+                config: config,
+                logMessage: () => {} 
+            });
 
         } catch (err) {
             console.log("[STATUS PLUGIN ERROR]", err);
