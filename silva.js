@@ -623,7 +623,7 @@ class SilvaBot {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
                 },
-                browser: Browsers.macOS(config.BOT_NAME),
+                browser: ["Silva MD", "Chrome", "3.0.0"],
                 markOnlineOnConnect: true,
                 generateHighQualityLinkPreview: true,
                 syncFullHistory: false,
