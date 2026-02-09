@@ -1,10 +1,10 @@
-// Silva MD Bot Menu Plugin
 const config = require('../config')
+const os = require('os')
 
 const handler = {
-    help: ['menu'],
+    help: ['menu', 'help'],
     tags: ['main'],
-    command: /^(menu)$/i,
+    command: /^(menu|help)$/i,
     group: false,
     admin: false,
     botAdmin: false,
@@ -16,72 +16,106 @@ const handler = {
             const sender = message.key.participant || from
             const pushname = message.pushName || 'User'
 
+            const uptime = formatUptime(process.uptime())
+            const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)
+            const platform = os.platform()
+            const p = config.PREFIX
+
             const bannerImage = 'https://files.catbox.moe/riwqjf.png'
 
-            const menuText = `
-╭━━━━━━━━━━━━━━━━━━━━╮
-┃   sɪʟᴠᴀ ᴍᴅ ʙᴏᴛ    ┃
-┃  ᴠᴇʀsɪᴏɴ 2.1.0     ┃
+            const menuText = `╭━━━━━━━━━━━━━━━━━━━━╮
+┃   ${config.BOT_NAME || 'SILVA MD'} v${config.VERSION || '3.0.0'}
 ╰━━━━━━━━━━━━━━━━━━━━╯
 
-┏━━━━━━━━━━━━━━━━━━━━┓
-┃ ᴜsᴇʀ: ${pushname}
-┃ ᴍᴏᴅᴇ: PUBLIC
-┃ ᴘʀᴇғɪx: ${config.PREFIX}
-┗━━━━━━━━━━━━━━━━━━━━┛
+👋 *Hey ${pushname}!*
 
-┏─『 ᴅᴏᴡɴʟᴏᴀᴅ ᴍᴇɴᴜ 』──⊷
-│ ${config.PREFIX}song
-│ ${config.PREFIX}video
-│ ${config.PREFIX}tiktok
-│ ${config.PREFIX}fb
-│ ${config.PREFIX}apk
-│ ${config.PREFIX}img
-┗──────────────⊷
+┏━━━ *BOT INFO* ━━━
+┃ 📡 Mode: ${config.BOT_MODE || 'public'}
+┃ ⏰ Uptime: ${uptime}
+┃ 💾 RAM: ${ram}MB
+┃ 🔌 Prefix: ${p}
+┗━━━━━━━━━━━━━━━━━━
 
-┏─『 sᴇᴀʀᴄʜ ᴍᴇɴᴜ 』──⊷
-│ ${config.PREFIX}yts
-│ ${config.PREFIX}lyrics
-┗──────────────⊷
+╭─『 📥 DOWNLOAD 』──⊷
+│ ${p}song <title>
+│ ${p}video <title>
+│ ${p}tiktok <url>
+│ ${p}fb <url>
+│ ${p}ig <url>
+│ ${p}capcut <url>
+│ ${p}yts <search>
+╰──────────────⊷
 
-┏─『 ᴍᴀɪɴ ᴍᴇɴᴜ 』──⊷
-│ ${config.PREFIX}alive
-│ ${config.PREFIX}ping
-│ ${config.PREFIX}uptime
-│ ${config.PREFIX}system
-│ ${config.PREFIX}help
-│ ${config.PREFIX}owner
-┗──────────────⊷
+╭─『 🤖 AI 』──⊷
+│ ${p}ai <prompt>
+│ ${p}gpt <question>
+│ ${p}ask <question>
+╰──────────────⊷
 
-┏─『 ᴜᴛɪʟɪᴛʏ ᴍᴇɴᴜ 』──⊷
-│ ${config.PREFIX}vv
-│ ${config.PREFIX}delete
-┗──────────────⊷
+╭─『 🛠️ UTILITY 』──⊷
+│ ${p}sticker / ${p}s
+│ ${p}take <pack> <author>
+│ ${p}tts <lang> <text>
+│ ${p}translate <lang> <text>
+│ ${p}weather <city>
+│ ${p}lyrics <song>
+│ ${p}tourl (reply to media)
+│ ${p}vv (view once)
+│ ${p}delete / ${p}del
+│ ${p}fancy <style> <text>
+│ ${p}short <url>
+╰──────────────⊷
 
-┏─『 ɢʀᴏᴜᴘ ᴍᴇɴᴜ 』──⊷
-│ ${config.PREFIX}hidetag
-│ ${config.PREFIX}delete
-│ ${config.PREFIX}mute
-│ ${config.PREFIX}unmute
-┗──────────────⊷
+╭─『 😎 FUN 』──⊷
+│ ${p}quote <category>
+│ ${p}movie <title>
+│ ${p}element <name>
+╰──────────────⊷
 
-┏─『 ᴀɪ ᴍᴇɴᴜ 』──⊷
-│ ${config.PREFIX}ai
-│ ${config.PREFIX}gpt
-┗──────────────⊷
+╭─『 👥 GROUP 』──⊷
+│ ${p}kick @user
+│ ${p}promote @user
+│ ${p}demote @user
+│ ${p}tagall <message>
+│ ${p}hidetag <message>
+│ ${p}mute / ${p}unmute
+│ ${p}antilink on/off
+│ ${p}antidemote on/off
+│ ${p}welcome on/off
+│ ${p}goodbye on/off
+│ ${p}clear
+│ ${p}jid
+╰──────────────⊷
 
-┏─『 ᴄᴏɴᴠᴇʀᴛ ᴍᴇɴᴜ 』──⊷
-│ ${config.PREFIX}tts
-┗──────────────⊷
+╭─『 🛡️ PROTECTION 』──⊷
+│ ${p}protect @user
+│ ${p}unprotect @user
+│ ${p}protected
+│ ${p}antidelete
+╰──────────────⊷
+
+╭─『 ⚙️ SYSTEM 』──⊷
+│ ${p}alive
+│ ${p}ping
+│ ${p}uptime
+│ ${p}menu
+│ ${p}owner
+│ ${p}repo
+╰──────────────⊷
+
+╭─『 👑 OWNER 』──⊷
+│ ${p}eval <code>
+│ ${p}broadcast <msg>
+│ ${p}ban @user
+│ ${p}unban @user
+│ ${p}banlist
+│ ${p}settings
+╰──────────────⊷
 
 ╭━━━━━━━━━━━━━━━━━━━━╮
-┃ ᴅᴇᴠᴇʟᴏᴘᴇʀ ɪɴғᴏ    ┃
-╰━━━━━━━━━━━━━━━━━━━━╯
-github.com/SilvaTechB
-pay.silvatech.top
-
-ᴘᴏᴡᴇʀᴇᴅ ʙʏ sɪʟᴠᴀ ᴍᴅ
-`
+┃ github.com/SilvaTechB
+┃ Powered by ${config.BOT_NAME || 'Silva MD'}
+╰━━━━━━━━━━━━━━━━━━━━╯`
 
             const menuMessage = {
                 image: { url: bannerImage },
@@ -92,19 +126,13 @@ pay.silvatech.top
                     isForwarded: true,
                     forwardedNewsletterMessageInfo: {
                         newsletterJid: '120363200367779016@newsletter',
-                        newsletterName: 'SILVATRIX',
+                        newsletterName: config.BOT_NAME || 'SILVA MD',
                         serverMessageId: Math.floor(Math.random() * 1000)
                     }
                 }
             }
 
-            // Send to user's DM
-            await sock.sendMessage(sender, menuMessage, { quoted: message })
-
-            // Also send to group if command used there
-            if (from.endsWith('@g.us')) {
-                await sock.sendMessage(from, menuMessage)
-            }
+            await sock.sendMessage(jid, menuMessage, { quoted: message })
 
         } catch (err) {
             await sock.sendMessage(jid, {
@@ -112,6 +140,20 @@ pay.silvatech.top
             }, { quoted: message })
         }
     }
+}
+
+function formatUptime(seconds) {
+    const d = Math.floor(seconds / 86400)
+    const h = Math.floor((seconds % 86400) / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    const s = Math.floor(seconds % 60)
+    
+    const parts = []
+    if (d > 0) parts.push(`${d}d`)
+    if (h > 0) parts.push(`${h}h`)
+    if (m > 0) parts.push(`${m}m`)
+    parts.push(`${s}s`)
+    return parts.join(' ')
 }
 
 module.exports = { handler }
