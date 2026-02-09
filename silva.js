@@ -150,92 +150,32 @@ class FunctionsWrapper {
     isOwner(sender) {
         botLogger.log('DEBUG', `[OWNER CHECK] Checking if sender is owner: ${sender}`);
         
-        // First: If message is from the bot itself (fromMe), it's automatically owner
-        // We'll handle this in the message handler by checking fromMe flag
+        if (!sender) return false;
         
         // Extract phone number or LID from sender
-        let phoneNumber = '';
-        let isLid = false;
+        let senderNumber = sender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        botLogger.log('DEBUG', `[OWNER CHECK] Cleaned sender number: ${senderNumber}`);
         
-        if (sender.includes('@lid')) {
-            // Handle LID format: 81712071631074@lid
-            phoneNumber = sender.split('@')[0];
-            isLid = true;
-            botLogger.log('DEBUG', `[OWNER CHECK] Sender is LID: ${phoneNumber}`);
-        } else if (sender.includes('@s.whatsapp.net')) {
-            // Handle standard JID format: 254700143167@s.whatsapp.net
-            phoneNumber = sender.split('@')[0];
-            botLogger.log('DEBUG', `[OWNER CHECK] Sender is JID: ${phoneNumber}`);
-        } else if (sender.includes(':')) {
-            // Handle other formats with colon
-            phoneNumber = sender.split(':')[0];
-        } else {
-            phoneNumber = sender;
-        }
+        // Check 1: Is this the bot's LID or Number?
+        if (this.botLid && senderNumber === this.botLid.replace(/[^0-9]/g, '')) return true;
+        if (this.botNumber && senderNumber === this.botNumber.replace(/[^0-9]/g, '')) return true;
         
-        // Clean the phone number (remove non-digits)
-        const cleanSender = phoneNumber.replace(/[^0-9]/g, '');
-        botLogger.log('DEBUG', `[OWNER CHECK] Cleaned sender: ${cleanSender}`);
-        
-        // Check 1: Is this the bot's LID?
-        if (isLid && this.botLid) {
-            const cleanBotLid = this.botLid.replace(/[^0-9]/g, '');
-            if (cleanSender === cleanBotLid) {
-                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot LID - GRANTING OWNER');
-                return true;
-            }
-        }
-        
-        // Check 2: Is this the bot's phone number?
-        if (this.botNumber) {
-            const cleanBotNum = this.botNumber.replace(/[^0-9]/g, '');
-            botLogger.log('DEBUG', `[OWNER CHECK] Bot number: ${cleanBotNum}`);
-            if (cleanSender === cleanBotNum) {
-                botLogger.log('DEBUG', '[OWNER CHECK] Sender is bot number - GRANTING OWNER');
-                return true;
-            }
-        }
-        
-        // Check 3: Check against config owner numbers
+        // Check 2: Check against config owner numbers
         let ownerNumbers = [];
         if (config.OWNER_NUMBER) {
-            if (Array.isArray(config.OWNER_NUMBER)) {
-                ownerNumbers = config.OWNER_NUMBER.map(num => {
-                    const cleanNum = num.replace(/[^0-9]/g, '');
-                    botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${num} -> ${cleanNum}`);
-                    return cleanNum;
-                });
-            } else if (typeof config.OWNER_NUMBER === 'string') {
-                const cleanNum = config.OWNER_NUMBER.replace(/[^0-9]/g, '');
-                ownerNumbers = [cleanNum];
-                botLogger.log('DEBUG', `[OWNER CHECK] Config owner: ${config.OWNER_NUMBER} -> ${cleanNum}`);
-            }
+            const rawOwners = Array.isArray(config.OWNER_NUMBER) ? config.OWNER_NUMBER : [config.OWNER_NUMBER];
+            ownerNumbers = rawOwners.map(num => num.toString().replace(/[^0-9]/g, ''));
         }
         
-        // Check 4: Also check connected number from config
+        if (ownerNumbers.includes(senderNumber)) return true;
+        
+        // Check 3: Also check connected number from config
         if (config.CONNECTED_NUMBER) {
-            const connectedNumber = config.CONNECTED_NUMBER.replace(/[^0-9]/g, '');
-            ownerNumbers.push(connectedNumber);
-            botLogger.log('DEBUG', `[OWNER CHECK] Connected number from config: ${connectedNumber}`);
+            const connectedNumber = config.CONNECTED_NUMBER.toString().replace(/[^0-9]/g, '');
+            if (senderNumber === connectedNumber) return true;
         }
         
-        // Remove duplicates
-        ownerNumbers = [...new Set(ownerNumbers)];
-        botLogger.log('DEBUG', `[OWNER CHECK] All owner numbers to check: ${ownerNumbers.join(', ')}`);
-        
-        // Check if sender matches any owner number
-        const isOwner = ownerNumbers.some(ownerNum => {
-            const match = cleanSender === ownerNum || 
-                         cleanSender.endsWith(ownerNum) || 
-                         ownerNum.endsWith(cleanSender);
-            if (match) {
-                botLogger.log('DEBUG', `[OWNER CHECK] Match found: ${cleanSender} === ${ownerNum}`);
-            }
-            return match;
-        });
-        
-        botLogger.log('DEBUG', `[OWNER CHECK] Final result for ${cleanSender}: ${isOwner}`);
-        return isOwner;
+        return false;
     }
 
     setBotNumber(number) {
@@ -414,9 +354,14 @@ class PluginManager {
                     
                     if (pluginModule && pluginModule.handler && pluginModule.handler.command) {
                         const handler = pluginModule.handler;
-                        this.commandHandlers.set(handler.command, handler);
+                        // Ensure command is a RegExp
+                        const commandRegex = handler.command instanceof RegExp 
+                            ? handler.command 
+                            : new RegExp(`^${handler.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+                            
+                        this.commandHandlers.set(commandRegex, handler);
                         
-                        this.pluginInfo.set(handler.command.source, {
+                        this.pluginInfo.set(commandRegex.source, {
                             help: handler.help || [],
                             tags: handler.tags || [],
                             group: handler.group || false,
@@ -619,6 +564,7 @@ class SilvaBot {
             this.sock = makeWASocket({
                 version,
                 logger: logger,
+                printQRInTerminal: true,
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -627,11 +573,12 @@ class SilvaBot {
                 markOnlineOnConnect: true,
                 generateHighQualityLinkPreview: true,
                 syncFullHistory: false,
-                defaultQueryTimeoutMs: 60000,
+                defaultQueryTimeoutMs: 120000,
                 cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
-                retryRequestDelayMs: 3000,
-                connectTimeoutMs: 60000,
-                keepAliveIntervalMs: 25000,
+                retryRequestDelayMs: 5000,
+                maxMsgRetryCount: 15,
+                connectTimeoutMs: 90000,
+                keepAliveIntervalMs: 30000,
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
@@ -643,12 +590,12 @@ class SilvaBot {
                 },
                 getMessage: async (key) => {
                     try {
-                        return await this.store.getMessage(key);
+                        const msg = await this.store.getMessage(key);
+                        return msg?.message || undefined;
                     } catch (error) {
                         return null;
                     }
                 },
-                printQRInTerminal: true
             });
 
             this.setupEvents(saveCreds);
@@ -1050,6 +997,31 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     text = message.message.imageMessage.caption;
                 } else if (message.message?.videoMessage?.caption) {
                     text = message.message.videoMessage.caption;
+                }
+
+                // Process commands
+                const prefix = config.PREFIX || '.';
+                const isCommand = text.startsWith(prefix);
+                
+                if (isCommand) {
+                    const commandText = text.slice(prefix.length).trim();
+                    const args = commandText.split(' ');
+                    const command = args.shift().toLowerCase();
+
+                    // First: If message is from the bot itself (fromMe), it's automatically owner
+                    const isOwner = isFromMe || this.functions.isOwner(sender);
+                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
+
+                    await this.pluginManager.executeCommand({
+                        text: commandText,
+                        args,
+                        jid,
+                        sender,
+                        isGroup,
+                        message,
+                        sock: this.sock,
+                        bot: this
+                    });
                 } else if (message.message?.documentMessage?.caption) {
                     text = message.message.documentMessage.caption;
                 } else if (message.message?.audioMessage) {
