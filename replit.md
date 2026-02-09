@@ -43,5 +43,5 @@ Environment variables:
 The bot runs via `node index.js` which starts both the HTTP health check server (port 5000) and the WhatsApp bot connection.
 
 ## Recent Changes
-- 2026-02-09: Major upgrade - fixed antidelete with pre-download media buffering, fixed antidemote (removed broken permissions dependency), fixed eval (owner-only security). Added 13 new plugins: owner, delete, tts, quote, broadcast, ban, antilink, clear, gpt, take, kick, promote/demote, welcome/goodbye, fancy text. Updated menu with all 55+ commands. Removed pair code auth (QR + SESSION_ID only)
+- 2026-02-09: Fixed command handling - added message container unwrapping for ephemeralMessage, viewOnceMessage, viewOnceMessageV2, documentWithCaptionMessage, editedMessage (was causing bot to not respond to commands in groups with disappearing messages). Major upgrade - fixed antidelete with pre-download media buffering, fixed antidemote (removed broken permissions dependency), fixed eval (owner-only security). Added 13 new plugins: owner, delete, tts, quote, broadcast, ban, antilink, clear, gpt, take, kick, promote/demote, welcome/goodbye, fancy text. Updated menu with all 55+ commands. Removed pair code auth (QR + SESSION_ID only)
 - 2026-02-08: Initial Replit setup - configured PORT=5000, installed dependencies including system packages (vips, python3) for sharp image processing
