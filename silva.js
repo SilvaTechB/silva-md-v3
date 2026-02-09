@@ -997,6 +997,31 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     text = message.message.imageMessage.caption;
                 } else if (message.message?.videoMessage?.caption) {
                     text = message.message.videoMessage.caption;
+                }
+
+                // Process commands
+                const prefix = config.PREFIX || '.';
+                const isCommand = text.startsWith(prefix);
+                
+                if (isCommand) {
+                    const commandText = text.slice(prefix.length).trim();
+                    const args = commandText.split(' ');
+                    const command = args.shift().toLowerCase();
+
+                    // First: If message is from the bot itself (fromMe), it's automatically owner
+                    const isOwner = isFromMe || this.functions.isOwner(sender);
+                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
+
+                    await this.pluginManager.executeCommand({
+                        text: commandText,
+                        args,
+                        jid,
+                        sender,
+                        isGroup,
+                        message,
+                        sock: this.sock,
+                        bot: this
+                    });
                 } else if (message.message?.documentMessage?.caption) {
                     text = message.message.documentMessage.caption;
                 } else if (message.message?.audioMessage) {
