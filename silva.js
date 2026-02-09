@@ -252,22 +252,30 @@ class FunctionsWrapper {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    // Extract text from message
+    // Extract text from message (with container unwrapping)
     extractText(message) {
         if (!message) return '';
         
-        if (message.conversation) {
-            return message.conversation;
-        } else if (message.extendedTextMessage?.text) {
-            return message.extendedTextMessage.text;
-        } else if (message.imageMessage?.caption) {
-            return message.imageMessage.caption;
-        } else if (message.videoMessage?.caption) {
-            return message.videoMessage.caption;
-        } else if (message.documentMessage?.caption) {
-            return message.documentMessage.caption;
-        } else if (message.audioMessage?.caption) {
-            return message.audioMessage.caption;
+        let msg = message;
+        if (msg?.ephemeralMessage?.message) msg = msg.ephemeralMessage.message;
+        if (msg?.viewOnceMessage?.message) msg = msg.viewOnceMessage.message;
+        if (msg?.viewOnceMessageV2?.message) msg = msg.viewOnceMessageV2.message;
+        if (msg?.viewOnceMessageV2Extension?.message) msg = msg.viewOnceMessageV2Extension.message;
+        if (msg?.documentWithCaptionMessage?.message) msg = msg.documentWithCaptionMessage.message;
+        if (msg?.editedMessage?.message) msg = msg.editedMessage.message;
+        
+        if (msg.conversation) {
+            return msg.conversation;
+        } else if (msg.extendedTextMessage?.text) {
+            return msg.extendedTextMessage.text;
+        } else if (msg.imageMessage?.caption) {
+            return msg.imageMessage.caption;
+        } else if (msg.videoMessage?.caption) {
+            return msg.videoMessage.caption;
+        } else if (msg.documentMessage?.caption) {
+            return msg.documentMessage.caption;
+        } else if (msg.audioMessage?.caption) {
+            return msg.audioMessage.caption;
         }
         return '';
     }
@@ -997,24 +1005,56 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     this.functions.setBotLid(lid + '@lid');
                 }
 
+                // Unwrap message containers (ephemeral, viewOnce, etc.)
+                let msgContent = message.message;
+                if (msgContent?.ephemeralMessage?.message) {
+                    msgContent = msgContent.ephemeralMessage.message;
+                }
+                if (msgContent?.viewOnceMessage?.message) {
+                    msgContent = msgContent.viewOnceMessage.message;
+                }
+                if (msgContent?.viewOnceMessageV2?.message) {
+                    msgContent = msgContent.viewOnceMessageV2.message;
+                }
+                if (msgContent?.viewOnceMessageV2Extension?.message) {
+                    msgContent = msgContent.viewOnceMessageV2Extension.message;
+                }
+                if (msgContent?.documentWithCaptionMessage?.message) {
+                    msgContent = msgContent.documentWithCaptionMessage.message;
+                }
+                if (msgContent?.editedMessage?.message) {
+                    msgContent = msgContent.editedMessage.message;
+                }
+
                 // Extract text from message
                 let text = '';
-                if (message.message?.conversation) {
-                    text = message.message.conversation;
-                } else if (message.message?.extendedTextMessage?.text) {
-                    text = message.message.extendedTextMessage.text;
-                } else if (message.message?.imageMessage?.caption) {
-                    text = message.message.imageMessage.caption;
-                } else if (message.message?.videoMessage?.caption) {
-                    text = message.message.videoMessage.caption;
+                if (msgContent?.conversation) {
+                    text = msgContent.conversation;
+                } else if (msgContent?.extendedTextMessage?.text) {
+                    text = msgContent.extendedTextMessage.text;
+                } else if (msgContent?.imageMessage?.caption) {
+                    text = msgContent.imageMessage.caption;
+                } else if (msgContent?.videoMessage?.caption) {
+                    text = msgContent.videoMessage.caption;
                 }
 
                 // Also extract from document/audio captions
-                if (!text && message.message?.documentMessage?.caption) {
-                    text = message.message.documentMessage.caption;
+                if (!text && msgContent?.documentMessage?.caption) {
+                    text = msgContent.documentMessage.caption;
                 }
-                if (!text && message.message?.audioMessage?.caption) {
-                    text = message.message.audioMessage.caption;
+                if (!text && msgContent?.audioMessage?.caption) {
+                    text = msgContent.audioMessage.caption;
+                }
+                
+                // Also try the buttonsResponseMessage and listResponseMessage
+                if (!text && msgContent?.buttonsResponseMessage?.selectedButtonId) {
+                    text = msgContent.buttonsResponseMessage.selectedButtonId;
+                }
+                if (!text && msgContent?.listResponseMessage?.singleSelectReply?.selectedRowId) {
+                    text = msgContent.listResponseMessage.singleSelectReply.selectedRowId;
+                }
+                if (!text && msgContent?.templateButtonReplyMessage?.selectedId) {
+                    text = msgContent.templateButtonReplyMessage.selectedId;
                 }
                 
                 if (text) {
