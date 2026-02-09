@@ -560,12 +560,10 @@ class SilvaBot {
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             const { version } = await fetchLatestBaileysVersion();
             
-            const usePairCode = config.USE_PAIR_CODE && !state.creds.registered;
-            
             this.sock = makeWASocket({
                 version,
                 logger: logger,
-                printQRInTerminal: !usePairCode,
+                printQRInTerminal: true,
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -598,31 +596,6 @@ class SilvaBot {
                     }
                 },
             });
-
-            // Pair code authentication
-            if (usePairCode) {
-                let pairNumber = config.PAIR_NUMBER || config.OWNER_NUMBER || '';
-                pairNumber = pairNumber.replace(/[^0-9]/g, '');
-                
-                if (pairNumber) {
-                    try {
-                        await delay(3000);
-                        const code = await this.sock.requestPairingCode(pairNumber);
-                        botLogger.log('BOT', `📱 PAIR CODE: ${code}`);
-                        botLogger.log('BOT', `Enter this code on WhatsApp > Linked Devices > Link with phone number`);
-                        console.log('\n' + '='.repeat(40));
-                        console.log(`  📱 YOUR PAIR CODE: ${code}`);
-                        console.log(`  Enter on WhatsApp > Linked Devices`);
-                        console.log('='.repeat(40) + '\n');
-                    } catch (err) {
-                        botLogger.log('ERROR', 'Pair code request failed: ' + err.message);
-                        botLogger.log('INFO', 'Falling back to QR code...');
-                    }
-                } else {
-                    botLogger.log('WARNING', 'No phone number configured for pair code. Set PAIR_NUMBER or OWNER_NUMBER env var.');
-                    botLogger.log('INFO', 'Falling back to QR code...');
-                }
-            }
 
             this.setupEvents(saveCreds);
             botLogger.log('SUCCESS', '✅ Bot initialized');

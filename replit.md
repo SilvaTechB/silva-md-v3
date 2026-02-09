@@ -16,7 +16,7 @@ Silva MD Bot is a WhatsApp bot built with Node.js using the Baileys library. It 
 - **Auto Status React**: Automatically likes/reacts to statuses with random emojis (enabled by default)
 - **Anti-Delete**: Recovers deleted messages with media and forwards to owner (enabled by default)
 - **Newsletter Auto-Follow**: Automatically follows configured newsletters on connection
-- **Pair Code Auth**: Uses pair code instead of QR code for authentication (set PAIR_NUMBER)
+- **QR Code Auth**: Uses QR code for authentication, or SESSION_ID env var to restore sessions
 - **Plugin System**: 44+ commands loaded from `silvaxlab/` directory
 
 ## Configuration
@@ -30,13 +30,11 @@ Environment variables:
 - `AUTO_STATUS_VIEW` - Auto view statuses (default: true, set to 'false' to disable)
 - `AUTO_STATUS_REACT` - Auto react to statuses (default: true, set to 'false' to disable)
 - `ANTI_DELETE` - Anti-delete feature (default: true, set to 'false' to disable)
-- `USE_PAIR_CODE` - Use pair code auth instead of QR (default: true)
-- `PAIR_NUMBER` - Phone number for pair code auth
 - `NEWSLETTER_IDS` - Comma-separated newsletter JIDs to auto-follow
 
 ## Running
 The bot runs via `node index.js` which starts both the HTTP health check server (port 5000) and the WhatsApp bot connection.
 
 ## Recent Changes
-- 2026-02-09: Major stability overhaul - fixed double command responses, fixed auto status view/react (removed status@broadcast from shouldIgnoreJid), added pair code auth, added newsletter auto-follow, rebuilt anti-delete with media recovery, enabled features by default
+- 2026-02-09: Removed pair code auth (back to QR code + SESSION_ID). Major stability overhaul - fixed double command responses, fixed auto status view/react, added newsletter auto-follow, rebuilt anti-delete with media recovery, enabled features by default
 - 2026-02-08: Initial Replit setup - configured PORT=5000, installed dependencies including system packages (vips, python3) for sharp image processing
