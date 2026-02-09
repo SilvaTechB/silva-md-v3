@@ -3,17 +3,17 @@ const fs = require('fs')
 // Native fetch (Node 18+)
 // DO NOT import node-fetch
 
-module.exports = {
+const handler = {
   command: "lyrics",
   alias: ["lyric", "lirik"],
   react: "🎵",
   desc: "Get song lyrics",
   category: "music",
 
-  async execute(sock, msg, args) {
+  execute: async ({ sock, message, args, botLogger }) => {
     try {
       const text = args.join(" ").trim()
-      const jid = msg.key.remoteJid
+      const jid = message.key.remoteJid
 
       if (!text) {
         return sock.sendMessage(
@@ -28,7 +28,7 @@ Usage:
 Example:
 .lyrics perfect ed sheeran`
           },
-          { quoted: msg }
+          { quoted: message }
         )
       }
 
@@ -67,7 +67,7 @@ Example:
         return sock.sendMessage(
           jid,
           { text: "❌ Lyrics not found. Try another song." },
-          { quoted: msg }
+          { quoted: message }
         )
       }
 
@@ -95,7 +95,7 @@ ${shortLyrics}`
           image: { url: thumb },
           caption
         },
-        { quoted: msg }
+        { quoted: message }
       )
 
       // ===== FULL LYRICS HANDLER =====
@@ -136,14 +136,16 @@ ${shortLyrics}`
 
     } catch (err) {
       await sock.sendMessage(
-        msg.key.remoteJid,
+        message.key.remoteJid,
         {
           text:
 `❌ *Lyrics Error*
 ${err.message}`
         },
-        { quoted: msg }
+        { quoted: message }
       )
     }
   }
 }
+
+module.exports = { handler }
