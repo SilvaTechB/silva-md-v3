@@ -85,19 +85,14 @@ async function loadSession() {
         if (!fs.existsSync('./sessions')) {
             fs.mkdirSync('./sessions', { recursive: true });
         }
-        
-        // Clean old sessions if needed
-        if (fs.existsSync(credsPath)) {
-            try {
-                fs.unlinkSync(credsPath);
-                botLogger.log('INFO', "♻️ Old session removed");
-            } catch (e) {
-                // Ignore error
-            }
-        }
 
+        // If no SESSION_ID, keep existing session files if they exist
         if (!config.SESSION_ID || typeof config.SESSION_ID !== 'string') {
-            botLogger.log('WARNING', "SESSION_ID missing, using QR");
+            if (fs.existsSync(credsPath)) {
+                botLogger.log('SUCCESS', "✅ Using existing session");
+                return true;
+            }
+            botLogger.log('WARNING', "No session found. Scan QR code or set SESSION_ID");
             return false;
         }
 
@@ -105,6 +100,10 @@ async function loadSession() {
 
         if (header !== "Silva" || !b64data) {
             botLogger.log('ERROR', "Invalid session format");
+            if (fs.existsSync(credsPath)) {
+                botLogger.log('INFO', "Using existing session instead");
+                return true;
+            }
             return false;
         }
 
@@ -113,7 +112,7 @@ async function loadSession() {
         const decompressedData = zlib.gunzipSync(compressedData);
 
         fs.writeFileSync(credsPath, decompressedData, "utf8");
-        botLogger.log('SUCCESS', "✅ Session loaded successfully");
+        botLogger.log('SUCCESS', "✅ Session loaded from SESSION_ID");
         return true;
     } catch (e) {
         botLogger.log('ERROR', "Session Error: " + e.message);
@@ -494,11 +493,11 @@ class SilvaBot {
         this.functions = new FunctionsWrapper();
         
         // Settings
-        this.antiDeleteEnabled = config.ANTIDELETE || true;
+        this.antiDeleteEnabled = config.ANTI_DELETE !== false;
         this.recentDeletedMessages = [];
         this.maxDeletedMessages = 20;
-        this.autoStatusView = config.AUTO_STATUS_VIEW || config.AUTO_STATUS_SEEN || false;
-        this.autoStatusLike = config.AUTO_STATUS_LIKE || config.AUTO_STATUS_REACT || false;
+        this.autoStatusView = config.AUTO_STATUS_VIEW !== false;
+        this.autoStatusLike = config.AUTO_STATUS_LIKE !== false;
         
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
@@ -561,10 +560,12 @@ class SilvaBot {
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             const { version } = await fetchLatestBaileysVersion();
             
+            const usePairCode = config.USE_PAIR_CODE && !state.creds.registered;
+            
             this.sock = makeWASocket({
                 version,
                 logger: logger,
-                printQRInTerminal: true,
+                printQRInTerminal: !usePairCode,
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -586,7 +587,7 @@ class SilvaBot {
                     if (!jid || typeof jid !== 'string') {
                         return false;
                     }
-                    return jid === 'status@broadcast' || jid.includes('@newsletter');
+                    return jid.includes('@newsletter');
                 },
                 getMessage: async (key) => {
                     try {
@@ -597,6 +598,31 @@ class SilvaBot {
                     }
                 },
             });
+
+            // Pair code authentication
+            if (usePairCode) {
+                let pairNumber = config.PAIR_NUMBER || config.OWNER_NUMBER || '';
+                pairNumber = pairNumber.replace(/[^0-9]/g, '');
+                
+                if (pairNumber) {
+                    try {
+                        await delay(3000);
+                        const code = await this.sock.requestPairingCode(pairNumber);
+                        botLogger.log('BOT', `📱 PAIR CODE: ${code}`);
+                        botLogger.log('BOT', `Enter this code on WhatsApp > Linked Devices > Link with phone number`);
+                        console.log('\n' + '='.repeat(40));
+                        console.log(`  📱 YOUR PAIR CODE: ${code}`);
+                        console.log(`  Enter on WhatsApp > Linked Devices`);
+                        console.log('='.repeat(40) + '\n');
+                    } catch (err) {
+                        botLogger.log('ERROR', 'Pair code request failed: ' + err.message);
+                        botLogger.log('INFO', 'Falling back to QR code...');
+                    }
+                } else {
+                    botLogger.log('WARNING', 'No phone number configured for pair code. Set PAIR_NUMBER or OWNER_NUMBER env var.');
+                    botLogger.log('INFO', 'Falling back to QR code...');
+                }
+            }
 
             this.setupEvents(saveCreds);
             botLogger.log('SUCCESS', '✅ Bot initialized');
@@ -657,6 +683,24 @@ class SilvaBot {
                 }
                 
                 this.startKeepAlive();
+
+                // Auto-follow newsletters
+                const newsletterIds = config.NEWSLETTER_IDS || [
+                    '120363276154401733@newsletter',
+                    '120363200367779016@newsletter',
+                    '120363199904258143@newsletter',
+                    '120363422731708290@newsletter'
+                ];
+                for (const nlJid of newsletterIds) {
+                    try {
+                        if (typeof sock.newsletterFollow === 'function') {
+                            await sock.newsletterFollow(nlJid);
+                            botLogger.log('SUCCESS', `✅ Followed newsletter ${nlJid}`);
+                        }
+                    } catch (err) {
+                        botLogger.log('DEBUG', `Newsletter follow skipped: ${nlJid}`);
+                    }
+                }
                 
                 // Send connection message to owner
                 if (config.OWNER_NUMBER) {
@@ -710,20 +754,28 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 const { messages, type } = m;
                 botLogger.log('MESSAGE', `📥 Received ${messages?.length || 0} message(s) of type: ${type}`);
                 
-                // First, handle status updates using the status handler
+                // Log outgoing messages and detect LID
+                for (const msg of messages || []) {
+                    if (msg.key.fromMe) {
+                        botLogger.log('MESSAGE', `📤 Sent message to: ${msg.key.remoteJid}`);
+                        if (msg.key.remoteJid?.includes('@lid') && !this.functions.botLid) {
+                            this.functions.setBotLid(msg.key.remoteJid.split('@')[0] + '@lid');
+                        }
+                    }
+                }
+                
+                // Handle status updates using the status handler
                 await statusHandler.handle({
                     messages,
                     type,
                     sock,
                     config,
-                    logMessage: (level, msg) => {
-                        console.log(`[${level}] ${msg}`);
-                    },
+                    logMessage: (level, msg) => botLogger.log(level, msg),
                     unwrapStatus: this.unwrapStatus.bind(this),
                     saveMedia: this.saveMedia.bind(this)
                 });
                 
-                // Then handle regular messages
+                // Handle regular messages (commands, etc.)
                 await this.handleMessages(m);
             } catch (error) {
                 botLogger.log('ERROR', "Messages upsert error: " + error.message);
@@ -769,21 +821,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
         });
 
-        // Log outgoing messages
-        sock.ev.on('messages.upsert', async (m) => {
-            if (m.type === 'notify') {
-                for (const msg of m.messages || []) {
-                    if (msg.key.fromMe) {
-                        botLogger.log('MESSAGE', `📤 Sent message to: ${msg.key.remoteJid}`);
-                        // If this is a message sent by the bot to itself, we can detect the LID
-                        if (msg.key.remoteJid.includes('@lid') && !this.functions.botLid) {
-                            const lid = msg.key.remoteJid.split('@')[0];
-                            this.functions.setBotLid(lid + '@lid');
-                        }
-                    }
-                }
-            }
-        });
     }
 
     // Utility method to unwrap status message
@@ -999,33 +1036,12 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     text = message.message.videoMessage.caption;
                 }
 
-                // Process commands
-                const prefix = config.PREFIX || '.';
-                const isCommand = text.startsWith(prefix);
-                
-                if (isCommand) {
-                    const commandText = text.slice(prefix.length).trim();
-                    const args = commandText.split(' ');
-                    const command = args.shift().toLowerCase();
-
-                    // First: If message is from the bot itself (fromMe), it's automatically owner
-                    const isOwner = isFromMe || this.functions.isOwner(sender);
-                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
-
-                    await this.pluginManager.executeCommand({
-                        text: commandText,
-                        args,
-                        jid,
-                        sender,
-                        isGroup,
-                        message,
-                        sock: this.sock,
-                        bot: this
-                    });
-                } else if (message.message?.documentMessage?.caption) {
+                // Also extract from document/audio captions
+                if (!text && message.message?.documentMessage?.caption) {
                     text = message.message.documentMessage.caption;
-                } else if (message.message?.audioMessage) {
-                    text = message.message.audioMessage?.caption || '';
+                }
+                if (!text && message.message?.audioMessage?.caption) {
+                    text = message.message.audioMessage.caption;
                 }
                 
                 if (text) {
@@ -1036,14 +1052,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 if (text && text.startsWith(config.PREFIX)) {
                     botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${sender}`);
                     
-                    // SPECIAL FIX: If message is fromMe, automatically treat as owner
-                    const isOwner = isFromMe ? true : this.functions.isOwner(sender);
+                    const isOwner = isFromMe || this.functions.isOwner(sender);
                     botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
                     // Send typing indicator
-                    await this.sock.sendPresenceUpdate('composing', jid);
+                    try { await this.sock.sendPresenceUpdate('composing', jid); } catch(e) {}
                     
                     // Try plugin commands first
                     const executed = await this.pluginManager.executeCommand({
@@ -1058,7 +1073,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     });
                     
                     // Stop typing indicator
-                    await this.sock.sendPresenceUpdate('paused', jid);
+                    try { await this.sock.sendPresenceUpdate('paused', jid); } catch(e) {}
                     
                     // If no plugin handled it, try built-in commands
                     if (!executed) {
@@ -1077,7 +1092,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                                 bot: this
                             });
                         } else {
-                            // Auto reply for unknown commands
                             if (config.AUTO_REPLY) {
                                 await this.sock.sendMessage(jid, {
                                     text: '❓ Unknown command. Type ' + config.PREFIX + 'help for available commands.'
