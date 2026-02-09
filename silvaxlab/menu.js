@@ -92,6 +92,8 @@ const handler = {
 │ ${p}unprotect @user
 │ ${p}protected
 │ ${p}antidelete
+│ ${p}anticall on/off
+│ ${p}checkban
 ╰──────────────⊷
 
 ╭─『 ⚙️ SYSTEM 』──⊷
@@ -109,6 +111,7 @@ const handler = {
 │ ${p}ban @user
 │ ${p}unban @user
 │ ${p}banlist
+│ ${p}bug @user <type>
 │ ${p}settings
 ╰──────────────⊷
 

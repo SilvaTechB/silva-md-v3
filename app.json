@@ -138,6 +138,11 @@
       "description": "OpenAI API key for GPT/AI chat features. Get one at platform.openai.com.",
       "required": false
     },
+    "ANTI_CALL": {
+      "description": "Automatically reject incoming WhatsApp calls (except from owner). Set to 'false' to disable.",
+      "value": "true",
+      "required": false
+    },
     "DEBUG_MODE": {
       "description": "Enable verbose debug logging for troubleshooting. Set to 'true' to enable.",
       "value": "false",
