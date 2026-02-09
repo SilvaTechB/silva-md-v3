@@ -48,10 +48,6 @@ module.exports = {
     // Newsletter Settings
     NEWSLETTER_IDS: process.env.NEWSLETTER_IDS ? process.env.NEWSLETTER_IDS.split(',') : null,
     
-    // Pair Code Auth
-    USE_PAIR_CODE: process.env.USE_PAIR_CODE !== 'false',
-    PAIR_NUMBER: process.env.PAIR_NUMBER || process.env.OWNER_NUMBER || '',
-    
     // Bot Info
     VERSION: '3.0.0',
     AUTHOR: 'Silva Tech Nexus',
