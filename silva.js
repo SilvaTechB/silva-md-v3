@@ -619,6 +619,7 @@ class SilvaBot {
             this.sock = makeWASocket({
                 version,
                 logger: logger,
+                printQRInTerminal: true,
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -627,11 +628,12 @@ class SilvaBot {
                 markOnlineOnConnect: true,
                 generateHighQualityLinkPreview: true,
                 syncFullHistory: false,
-                defaultQueryTimeoutMs: 60000,
+                defaultQueryTimeoutMs: 120000,
                 cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
-                retryRequestDelayMs: 3000,
-                connectTimeoutMs: 60000,
-                keepAliveIntervalMs: 25000,
+                retryRequestDelayMs: 5000,
+                maxMsgRetryCount: 15,
+                connectTimeoutMs: 90000,
+                keepAliveIntervalMs: 30000,
                 emitOwnEvents: true,
                 fireInitQueries: true,
                 mobile: false,
@@ -643,12 +645,12 @@ class SilvaBot {
                 },
                 getMessage: async (key) => {
                     try {
-                        return await this.store.getMessage(key);
+                        const msg = await this.store.getMessage(key);
+                        return msg?.message || undefined;
                     } catch (error) {
                         return null;
                     }
                 },
-                printQRInTerminal: true
             });
 
             this.setupEvents(saveCreds);
