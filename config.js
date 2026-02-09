@@ -13,10 +13,10 @@ module.exports = {
     AUTO_REPLY: process.env.AUTO_REPLY === 'true',
     
     // Status Handler Settings
-    AUTO_STATUS_SEEN: process.env.AUTO_STATUS_SEEN === 'true',
-    AUTO_STATUS_LIKE: process.env.AUTO_STATUS_LIKE === 'true' || process.env.AUTO_STATUS_REACT === 'true',
-    AUTO_STATUS_VIEW: process.env.AUTO_STATUS_VIEW === 'true' || process.env.AUTO_STATUS_SEEN === 'true',
-    AUTO_STATUS_REACT: process.env.AUTO_STATUS_REACT === 'true',
+    AUTO_STATUS_SEEN: process.env.AUTO_STATUS_SEEN !== 'false',
+    AUTO_STATUS_LIKE: process.env.AUTO_STATUS_LIKE !== 'false' || process.env.AUTO_STATUS_REACT !== 'false',
+    AUTO_STATUS_VIEW: process.env.AUTO_STATUS_VIEW !== 'false' || process.env.AUTO_STATUS_SEEN !== 'false',
+    AUTO_STATUS_REACT: process.env.AUTO_STATUS_REACT !== 'false',
     AUTO_STATUS_REPLY: process.env.AUTO_STATUS_REPLY === 'true',
     AUTO_STATUS_MSG: process.env.AUTO_STATUS_MSG || '✅ Status viewed by Silva MD',
     STATUS_SAVER: process.env.STATUS_SAVER === 'true' || process.env.STATUS_Saver === 'true',
@@ -30,9 +30,10 @@ module.exports = {
     STATUS_SAVE_PATH: process.env.STATUS_SAVE_PATH || './status_saves',
     
     // Antidelete Settings
-    ANTI_DELETE: process.env.ANTI_DELETE === 'true' || process.env.ANTIDELETE === 'true',
-    ANTI_DELETE_GROUP: process.env.ANTI_DELETE_GROUP === 'true',
-    ANTI_DELETE_PRIVATE: process.env.ANTI_DELETE_PRIVATE === 'true',
+    ANTI_DELETE: process.env.ANTI_DELETE !== 'false' && process.env.ANTIDELETE !== 'false',
+    ANTIDELETE: process.env.ANTI_DELETE !== 'false' && process.env.ANTIDELETE !== 'false',
+    ANTI_DELETE_GROUP: process.env.ANTI_DELETE_GROUP !== 'false',
+    ANTI_DELETE_PRIVATE: process.env.ANTI_DELETE_PRIVATE !== 'false',
     
     // Bot Owner Settings
     CONNECTED_NUMBER: process.env.CONNECTED_NUMBER || '',
@@ -43,6 +44,13 @@ module.exports = {
     // Allowed Users (for private mode)
     ALLOWED_USERS: process.env.ALLOWED_USERS ? 
         process.env.ALLOWED_USERS.split(',') : [],
+    
+    // Newsletter Settings
+    NEWSLETTER_IDS: process.env.NEWSLETTER_IDS ? process.env.NEWSLETTER_IDS.split(',') : null,
+    
+    // Pair Code Auth
+    USE_PAIR_CODE: process.env.USE_PAIR_CODE !== 'false',
+    PAIR_NUMBER: process.env.PAIR_NUMBER || process.env.OWNER_NUMBER || '',
     
     // Bot Info
     VERSION: '3.0.0',
