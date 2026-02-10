@@ -763,28 +763,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
         });
 
-        // Handle message updates
-        sock.ev.on('messages.update', async (updates) => {
-            for (const update of updates) {
-                try {
-                    if (update.update && (update.update === 'delete' || update.update.messageStubType === 7)) {
-                        await this.handleMessageDelete(update);
-                    }
-                } catch (error) {
-                    botLogger.log('ERROR', "Message update error: " + error.message);
-                }
-            }
-        });
-
-        // Handle message delete events
-        sock.ev.on('messages.delete', async (deletion) => {
-            try {
-                await this.handleBulkMessageDelete(deletion);
-            } catch (error) {
-                botLogger.log('ERROR', "Message delete error: " + error.message);
-            }
-        });
-
         // Handle group participants updates (welcome/goodbye + bot added)
         sock.ev.on('group-participants.update', async (event) => {
             try {
