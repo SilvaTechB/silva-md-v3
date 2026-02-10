@@ -1,5 +1,6 @@
 // Auto Status View, React & Reply Plugin
 const config = require('../config')
+const { downloadMediaMessage } = require('@whiskeysockets/baileys')
 
 const handler = {
     help: ['autostatus'],
@@ -60,7 +61,10 @@ const handler = {
             if (config.Status_Saver === 'true' || config.Status_Saver === true) {
                 if (message.message?.imageMessage || message.message?.videoMessage) {
                     try {
-                        const buffer = await sock.downloadMediaMessage(message)
+                        const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+                            logger: { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} },
+                            reuploadRequest: sock.updateMediaMessage
+                        })
                         const fileName = `status_${Date.now()}.${statusType === 'image' ? 'jpg' : 'mp4'}`
                         
                         // You can implement your own storage logic here

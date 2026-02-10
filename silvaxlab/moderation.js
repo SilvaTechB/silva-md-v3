@@ -2,6 +2,7 @@
 const config = require('../config')
 const fs = require('fs')
 const axios = require('axios')
+const { downloadMediaMessage } = require('@whiskeysockets/baileys')
 
 const handler = {
     help: ['archive', 'unarchive', 'mute', 'unmute', 'pin', 'unpin', 'markread', 'markunread', 
@@ -244,9 +245,11 @@ ${config.PREFIX}setpp
                     }
 
                     try {
-                        const media = await sock.downloadMediaMessage(
-                            { message: quoted.quotedMessage },
-                            'buffer'
+                        const media = await downloadMediaMessage(
+                            { key: message.key, message: quoted.quotedMessage },
+                            'buffer',
+                            {},
+                            { logger: { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} }, reuploadRequest: sock.updateMediaMessage }
                         )
 
                         const targetJid = args[0] && args[0].endsWith('@g.us') ? args[0] : 

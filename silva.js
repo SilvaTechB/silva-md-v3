@@ -388,10 +388,15 @@ class PluginManager {
                     
                     if (pluginModule && pluginModule.handler && pluginModule.handler.command) {
                         const handler = pluginModule.handler;
-                        // Ensure command is a RegExp
-                        const commandRegex = handler.command instanceof RegExp 
-                            ? handler.command 
-                            : new RegExp(`^${handler.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+                        let commandRegex;
+                        if (handler.command instanceof RegExp) {
+                            commandRegex = handler.command;
+                        } else {
+                            const mainCmd = handler.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            const aliases = handler.alias && Array.isArray(handler.alias) ? handler.alias : [];
+                            const allCmds = [mainCmd, ...aliases.map(a => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))];
+                            commandRegex = new RegExp(`^(${allCmds.join('|')})$`, 'i');
+                        }
                             
                         this.commandHandlers.set(commandRegex, handler);
                         
@@ -1200,7 +1205,9 @@ _Type ${p}menu to see all ${totalPlugins}+ commands!_`;
                         args: cmdText.split(/ +/).slice(1),
                         message,
                         sock: this.sock,
-                        bot: this
+                        bot: this,
+                        config,
+                        botLogger
                     });
                     
                     // If no plugin handled it, try built-in commands

@@ -31,9 +31,9 @@ const handler = {
         }
 
         const [action, type, groupLink] = args;
-        if (!['enable', 'disable'].includes(action.toLowerCase())) return message.reply('❌ Action must be enable or disable');
-        if (!['welcome', 'goodbye'].includes(type.toLowerCase())) return message.reply('❌ Type must be welcome or goodbye');
-        if (!groupLink || !groupLink.includes('https://chat.whatsapp.com/')) return message.reply('❌ Invalid group link');
+        if (!['enable', 'disable'].includes(action.toLowerCase())) return sock.sendMessage(jid, { text: '❌ Action must be enable or disable' }, { quoted: message });
+        if (!['welcome', 'goodbye'].includes(type.toLowerCase())) return sock.sendMessage(jid, { text: '❌ Type must be welcome or goodbye' }, { quoted: message });
+        if (!groupLink || !groupLink.includes('https://chat.whatsapp.com/')) return sock.sendMessage(jid, { text: '❌ Invalid group link' }, { quoted: message });
 
         try {
             const inviteCode = groupLink.split('/')[4];
@@ -56,7 +56,7 @@ const handler = {
                 }
             });
         } catch (err) {
-            return message.reply(`❌ Error: ${err.message}`);
+            return sock.sendMessage(jid, { text: `❌ Error: ${err.message}` }, { quoted: message });
         }
     }
 };
