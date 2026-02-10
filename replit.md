@@ -76,6 +76,7 @@ The bot runs via `node index.js` which starts:
 - **Package.json**: Uses `dgxeon-soket` (custom Baileys fork). Express added for API server.
 
 ## Recent Changes
+- 2026-02-10: v3.3 - Replaced JSON health check with modern HTML dashboard (live uptime counter, plugin count, memory usage, protection status, bot config). Cleaned up obfuscated index.js.
 - 2026-02-10: v3.2 - Created antibot plugin. Fixed ai.js/gpt.js command conflict (ai.js now only /^(ai)$/, gpt.js handles gpt/chatgpt/ask). Removed all broken templateButtons/sections code from alive.js, ping.js, menu.js (deprecated in modern Baileys). Rewrote start command with comprehensive info display (uptime, RAM, plugin count, protection status, quick start guide, banner image). Updated menu with all new plugins (warn, poll, announce, gdesc, admins, revoke, antibot, setwelcome, setgoodbye). Reduced status handler log verbosity. Total: 87 plugins.
 - 2026-02-10: Major upgrade v3.1 - Fixed antidelete, created self-hosted Media API server, enhanced bug plugin, added 10 new plugins, updated menu. Total: 80 plugins.
 - 2026-02-10: Fixed sticker plugin, music plugin, added 9 fun plugins. Total: 70 plugins.
