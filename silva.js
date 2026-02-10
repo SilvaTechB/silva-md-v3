@@ -805,6 +805,27 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     return;
                 }
 
+                // Anti-bot detection
+                if (action === 'add') {
+                    try {
+                        const { antiBotGroups } = require('./silvaxlab/antibot');
+                        if (antiBotGroups.has(id)) {
+                            const botJid = this.sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
+                            for (const participant of participants) {
+                                if (participant === botJid) continue;
+                                try {
+                                    const numOnly = participant.split('@')[0];
+                                    if (numOnly.length > 15 || participant.includes('lid')) continue;
+                                    const [result] = await sock.onWhatsApp(participant) || [];
+                                    if (result && result.jid) {
+                                        // Not a reliable bot detection, skip for now
+                                    }
+                                } catch (e) {}
+                            }
+                        }
+                    } catch (e) {}
+                }
+
                 // Welcome/Goodbye messages
                 try {
                     const { welcomeGroups } = require('./silvaxlab/welcome');
@@ -1458,15 +1479,74 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
     async startCommand(context) {
         const { jid, sock, message } = context;
-        const startText = '✨ *Welcome to Silva MD!*\n\n' +
-                         'I am an advanced WhatsApp bot with plugin support.\n\n' +
-                         'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
-                         'Prefix: ' + config.PREFIX + '\n' +
-                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
-                         'Type ' + config.PREFIX + 'help for commands';
-        
-        await sock.sendMessage(jid, { 
-            text: startText
+        const sender = message.key.participant || message.key.remoteJid;
+        const pushname = message.pushName || 'User';
+        const uptime = process.uptime();
+        const d = Math.floor(uptime / 86400);
+        const h = Math.floor((uptime % 86400) / 3600);
+        const m = Math.floor((uptime % 3600) / 60);
+        const uptimeStr = `${d > 0 ? d + 'd ' : ''}${h}h ${m}m`;
+        const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+        const totalPlugins = this.pluginManager.getCommandList().length;
+        const p = config.PREFIX;
+
+        const bannerImage = 'https://files.catbox.moe/riwqjf.png';
+
+        const startText = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮
+┃  🤖 *${config.BOT_NAME || 'SILVA MD'} v${config.VERSION || '3.0.0'}*
+┃  _Your Ultimate WhatsApp Companion_
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+
+👋 *Hello ${pushname}!*
+
+Welcome to *${config.BOT_NAME || 'Silva MD'}* - the most powerful WhatsApp bot with ${totalPlugins}+ commands!
+
+┏━━━ *📊 BOT STATUS* ━━━
+┃ 📡 Mode: ${config.BOT_MODE || 'public'}
+┃ 🔌 Prefix: [ ${p} ]
+┃ ⏰ Uptime: ${uptimeStr}
+┃ 💾 RAM: ${ram}MB
+┃ 🔧 Plugins: ${totalPlugins}
+┗━━━━━━━━━━━━━━━━━━━━━
+
+┏━━━ *🛡️ PROTECTION* ━━━
+┃ 🗑️ Anti-Delete: ${this.antiDeleteEnabled ? '✅ ON' : '❌ OFF'}
+┃ 📞 Anti-Call: ${config.ANTI_CALL ? '✅ ON' : '❌ OFF'}
+┃ 👁️ Auto Status View: ${config.AUTO_STATUS_VIEW !== false ? '✅ ON' : '❌ OFF'}
+┃ ❤️ Auto Status React: ${config.AUTO_STATUS_REACT !== false ? '✅ ON' : '❌ OFF'}
+┗━━━━━━━━━━━━━━━━━━━━━
+
+┏━━━ *⚡ QUICK START* ━━━
+┃ ${p}menu - Full command list
+┃ ${p}help - Help guide
+┃ ${p}alive - Check bot status
+┃ ${p}ping - Speed test
+┃ ${p}ai <question> - Chat with AI
+┃ ${p}play <song> - Play music
+┃ ${p}sticker - Create stickers
+┗━━━━━━━━━━━━━━━━━━━━━
+
+┏━━━ *🔗 CONNECT* ━━━
+┃ 📢 Channel: wa.me/channel/0029VaAkETLLY6d8qhLmZt2v
+┃ 💻 GitHub: github.com/SilvaTechB
+┗━━━━━━━━━━━━━━━━━━━━━
+
+_Powered by Silva Tech Nexus_
+_Type ${p}menu to see all ${totalPlugins}+ commands!_`;
+
+        await sock.sendMessage(jid, {
+            image: { url: bannerImage },
+            caption: startText,
+            contextInfo: {
+                mentionedJid: [sender],
+                forwardingScore: 999,
+                isForwarded: true,
+                forwardedNewsletterMessageInfo: {
+                    newsletterJid: '120363200367779016@newsletter',
+                    newsletterName: config.BOT_NAME || 'SILVA MD',
+                    serverMessageId: Math.floor(Math.random() * 1000)
+                }
+            }
         }, { quoted: message });
     }
 

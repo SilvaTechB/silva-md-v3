@@ -95,13 +95,18 @@ const handler = {
 │ ${p}everyone / ${p}hidetag
 │ ${p}mute / ${p}unmute
 │ ${p}ginfo - Group info
+│ ${p}gdesc <text> - Set description
 │ ${p}linkgroup - Group link
+│ ${p}revoke - Reset group link
 │ ${p}setpp - Set group pic
-│ ${p}antilink on/off
-│ ${p}antidemote on/off
-│ ${p}antispam on/off
+│ ${p}announce on/off
+│ ${p}poll <question>|<opt1>|<opt2>
+│ ${p}warn @user - Warn (3=kick)
+│ ${p}admins - List all admins
 │ ${p}welcome on/off
+│ ${p}setwelcome <msg>
 │ ${p}goodbye on/off
+│ ${p}setgoodbye <msg>
 │ ${p}clear
 │ ${p}jid
 ╰──────────────⊷
@@ -109,13 +114,17 @@ const handler = {
 ╭─『 🛡️ PROTECTION 』──⊷
 │ ${p}antidelete
 │ ${p}anticall on/off
+│ ${p}antilink on/off
+│ ${p}antidemote on/off
 │ ${p}antispam on/off
+│ ${p}antibot on/off
 │ ${p}checkban @user
 ╰──────────────⊷
 
 ╭─『 ⚙️ SYSTEM 』──⊷
 │ ${p}alive
 │ ${p}ping
+│ ${p}start - Quick start guide
 │ ${p}uptime
 │ ${p}menu / ${p}help
 │ ${p}owner
@@ -151,84 +160,6 @@ const handler = {
                     }
                 }
             }, { quoted: message })
-
-            try {
-                const sections = [
-                    {
-                        title: '📥 Download',
-                        rows: [
-                            { title: `${p}play`, description: 'Play a song from YouTube' },
-                            { title: `${p}video`, description: 'Download YouTube video' },
-                            { title: `${p}tiktok`, description: 'Download TikTok video' },
-                            { title: `${p}ig`, description: 'Download Instagram media' },
-                            { title: `${p}fb`, description: 'Download Facebook video' },
-                            { title: `${p}apk`, description: 'Download Android APK' },
-                            { title: `${p}yts`, description: 'Search YouTube videos' }
-                        ]
-                    },
-                    {
-                        title: '🎮 Fun & Games',
-                        rows: [
-                            { title: `${p}truth`, description: 'Get a truth question' },
-                            { title: `${p}dare`, description: 'Get a dare challenge' },
-                            { title: `${p}joke`, description: 'Get a random joke' },
-                            { title: `${p}8ball`, description: 'Ask the magic 8-ball' },
-                            { title: `${p}flip`, description: 'Flip a coin' },
-                            { title: `${p}rps`, description: 'Rock Paper Scissors' },
-                            { title: `${p}riddle`, description: 'Get a brain teaser' },
-                            { title: `${p}ship`, description: 'Love compatibility meter' },
-                            { title: `${p}fact`, description: 'Random fun fact' },
-                            { title: `${p}inspire`, description: 'Motivational quote' }
-                        ]
-                    },
-                    {
-                        title: '🛠️ Utility',
-                        rows: [
-                            { title: `${p}sticker`, description: 'Create sticker from image/video' },
-                            { title: `${p}tts`, description: 'Text to speech' },
-                            { title: `${p}translate`, description: 'Translate text' },
-                            { title: `${p}weather`, description: 'Get weather info' },
-                            { title: `${p}whois`, description: 'User info lookup' },
-                            { title: `${p}pp`, description: 'View profile picture' },
-                            { title: `${p}ai`, description: 'Chat with AI' }
-                        ]
-                    },
-                    {
-                        title: '👥 Group Management',
-                        rows: [
-                            { title: `${p}kick`, description: 'Remove a member' },
-                            { title: `${p}promote`, description: 'Make admin' },
-                            { title: `${p}tagall`, description: 'Tag all members' },
-                            { title: `${p}everyone`, description: 'Hidden tag all' },
-                            { title: `${p}ginfo`, description: 'Group information' },
-                            { title: `${p}linkgroup`, description: 'Get group invite link' },
-                            { title: `${p}setpp`, description: 'Set group picture' },
-                            { title: `${p}mute`, description: 'Mute group' },
-                            { title: `${p}antispam`, description: 'Anti-spam protection' }
-                        ]
-                    },
-                    {
-                        title: '👑 Owner & System',
-                        rows: [
-                            { title: `${p}ping`, description: 'Check bot speed' },
-                            { title: `${p}alive`, description: 'Check if bot is alive' },
-                            { title: `${p}ban`, description: 'Ban a user (owner)' },
-                            { title: `${p}broadcast`, description: 'Broadcast message (owner)' },
-                            { title: `${p}bug`, description: 'Send bug (10 types)' },
-                            { title: `${p}checkban`, description: 'Check ban status' }
-                        ]
-                    }
-                ]
-
-                await sock.sendMessage(jid, {
-                    text: `📋 *Quick Command List*\n\n_Tap a command to select it!_\n\n_${config.BOT_NAME || 'Silva MD'} - Your Ultimate WhatsApp Companion_`,
-                    footer: `${config.BOT_NAME || 'Silva MD'} v${config.VERSION || '3.0.0'} | ${p}menu for full list`,
-                    title: 'SELECT A COMMAND',
-                    buttonText: '📋 Open Command List',
-                    sections
-                })
-            } catch (e) {
-            }
 
         } catch (err) {
             await sock.sendMessage(jid, {
