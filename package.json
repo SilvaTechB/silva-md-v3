@@ -17,7 +17,7 @@
     "automation",
     "plugin-system"
   ],
-  "author": "Silva Tech Nexus",
+  "author": "Silva",
   "license": "MIT",
   "dependencies": {
     "@hapi/boom": "^10.0.1",

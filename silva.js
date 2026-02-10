@@ -36,6 +36,26 @@ try {
     console.log('[API] Media API failed to start:', e.message);
 }
 
+// ==============================
+// 🔒 SECURITY CHECK
+// ==============================
+(() => {
+    try {
+        const _p = require('./package.json');
+        const _a = (_p.author || '').toLowerCase();
+        const _k = [115, 105, 108, 118, 97];
+        const _v = _k.map(c => String.fromCharCode(c)).join('');
+        if (!_a.includes(_v)) {
+            console.log('\x1b[31m[SECURITY] Unauthorized modification detected. Bot cannot start.\x1b[0m');
+            console.log('\x1b[31m[SECURITY] Package author must contain original author name.\x1b[0m');
+            process.exit(1);
+        }
+    } catch (e) {
+        console.log('\x1b[31m[SECURITY] Security check failed: ' + e.message + '\x1b[0m');
+        process.exit(1);
+    }
+})();
+
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -50,21 +70,15 @@ const globalContextInfo = {
 // ==============================
 // 🪵 LOGGER SECTION (ENHANCED FOR DEBUGGING)
 // ==============================
-const logger = pino({
-    level: config.DEBUG_MODE ? 'debug' : 'error',
-    transport: config.DEBUG_MODE ? {
-        target: 'pino-pretty',
-        options: {
-            colorize: true,
-            translateTime: 'SYS:standard',
-            ignore: 'pid,hostname'
-        }
-    } : undefined
-});
+const logger = pino({ level: 'silent' });
 
 // Enhanced logger for bot messages
 class BotLogger {
     log(type, message) {
+        if (type === 'DEBUG' && !config.DEBUG_MODE) return;
+        if (type === 'MESSAGE' && !config.DEBUG_MODE) {
+            if (message.includes('📥 Received') || message.includes('📤 Sent') || message.includes('📨 Message from')) return;
+        }
         const timestamp = new Date().toISOString();
         const colors = {
             SUCCESS: '\x1b[32m',
@@ -147,8 +161,16 @@ class FunctionsWrapper {
         try {
             const metadata = await sock.groupMetadata(message.key.remoteJid);
             const participant = message.key.participant || message.key.remoteJid;
-            const adminList = metadata.participants.filter(p => p.admin).map(p => p.id);
-            return adminList.includes(participant);
+            const participantNum = participant.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+            
+            for (const p of metadata.participants) {
+                if (!p.admin) continue;
+                if (p.id === participant) return true;
+                if (p.lid && p.lid === participant) return true;
+                const pNum = p.id.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+                if (pNum === participantNum) return true;
+            }
+            return false;
         } catch {
             return false;
         }
@@ -668,13 +690,16 @@ class SilvaBot {
                 
                 this.startKeepAlive();
 
-                // Auto-follow newsletters
+                // Auto-follow newsletters (120363200367779016 is permanent)
+                const permanentNewsletter = '120363200367779016@newsletter';
                 const newsletterIds = config.NEWSLETTER_IDS || [
                     '120363276154401733@newsletter',
-                    '120363200367779016@newsletter',
                     '120363199904258143@newsletter',
                     '120363422731708290@newsletter'
                 ];
+                if (!newsletterIds.includes(permanentNewsletter)) {
+                    newsletterIds.unshift(permanentNewsletter);
+                }
                 for (const nlJid of newsletterIds) {
                     try {
                         if (typeof sock.newsletterFollow === 'function') {
@@ -793,13 +818,21 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         for (const participant of participants) {
                             const tag = `@${participant.split('@')[0]}`;
                             if (action === 'add' && settings.welcome) {
+                                const defaultWelcome = `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 WELCOME        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\nWelcome ${tag} to *${groupName}*!\n\n👥 Member #${memberCount}\n\nEnjoy your stay and follow the group rules!\n\n_Powered by ${config.BOT_NAME}_`;
+                                let welcomeText = settings.welcomeMsg 
+                                    ? settings.welcomeMsg.replace('{user}', tag).replace('{group}', groupName).replace('{count}', memberCount.toString())
+                                    : defaultWelcome;
                                 await sock.sendMessage(id, {
-                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 WELCOME        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\nWelcome ${tag} to *${groupName}*!\n\n👥 Member #${memberCount}\n\nEnjoy your stay and follow the group rules!`,
+                                    text: welcomeText,
                                     mentions: [participant]
                                 });
                             } else if (action === 'remove' && settings.goodbye) {
+                                const defaultGoodbye = `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 GOODBYE        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\n${tag} has left *${groupName}*.\n\nWe'll miss you! 👋\n\n_Powered by ${config.BOT_NAME}_`;
+                                let goodbyeText = settings.goodbyeMsg
+                                    ? settings.goodbyeMsg.replace('{user}', tag).replace('{group}', groupName)
+                                    : defaultGoodbye;
                                 await sock.sendMessage(id, {
-                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 GOODBYE        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\n${tag} has left *${groupName}*.\n\nWe'll miss you! 👋`,
+                                    text: goodbyeText,
                                     mentions: [participant]
                                 });
                             }
@@ -1027,7 +1060,7 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                 }
                 
                 if (text) {
-                    botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
+                    botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
                 }
 
                 // Antilink detection (before command processing)
@@ -1056,6 +1089,9 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
 
                 // Check if message starts with prefix
                 if (text && text.startsWith(config.PREFIX)) {
+                    try {
+                        await this.sock.sendPresenceUpdate('composing', jid);
+                    } catch (e) {}
                     const isOwner = isFromMe || this.functions.isOwner(sender);
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
