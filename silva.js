@@ -938,17 +938,81 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     // Detect bot's LID by checking messages sent by the bot
     async detectBotLid() {
         try {
-            // Send a test message to ourselves to detect LID
             if (this.functions.botNumber) {
                 const botJid = this.functions.botNumber + '@s.whatsapp.net';
                 await delay(1000);
-                await this.sock.sendMessage(botJid, {
-                    text: '🤖 *Bot Activated!*\nType ' + config.PREFIX + 'help for commands'
-                });
-                botLogger.log('INFO', 'Test message sent to detect LID');
+
+                const uptime = process.uptime();
+                const h = Math.floor(uptime / 3600);
+                const m = Math.floor((uptime % 3600) / 60);
+                const uptimeStr = `${h}h ${m}m`;
+                const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+                const totalPlugins = this.pluginManager.getCommandList().length;
+                const p = config.PREFIX;
+
+                const bannerImage = 'https://files.catbox.moe/riwqjf.png';
+
+                const welcomeText = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮
+┃  🤖 *${config.BOT_NAME || 'SILVA MD'} v${config.VERSION || '3.0.0'}*
+┃  _Successfully Connected!_
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+
+┏━━━ *📊 BOT STATUS* ━━━
+┃ 📡 Mode: ${config.BOT_MODE || 'public'}
+┃ 🔌 Prefix: [ ${p} ]
+┃ ⏰ Uptime: ${uptimeStr}
+┃ 💾 RAM: ${ram}MB
+┃ 🔧 Plugins: ${totalPlugins}
+┃ 👤 Owner: ${config.OWNER_NUMBER || 'Not set'}
+┗━━━━━━━━━━━━━━━━━━━━━
+
+┏━━━ *🛡️ PROTECTION* ━━━
+┃ 🗑️ Anti-Delete: ${this.antiDeleteEnabled ? '✅ ON' : '❌ OFF'}
+┃ 📞 Anti-Call: ${config.ANTI_CALL ? '✅ ON' : '❌ OFF'}
+┃ 👁️ Auto Status View: ✅ ON
+┃ ❤️ Auto Status React: ✅ ON
+┗━━━━━━━━━━━━━━━━━━━━━
+
+┏━━━ *⚡ QUICK START* ━━━
+┃ ${p}menu - Full command list
+┃ ${p}help - Help guide
+┃ ${p}start - Bot info
+┃ ${p}alive - Check status
+┃ ${p}ping - Speed test
+┃ ${p}ai <question> - Chat with AI
+┃ ${p}play <song> - Play music
+┃ ${p}sticker - Create stickers
+┗━━━━━━━━━━━━━━━━━━━━━
+
+┏━━━ *🔗 CONNECT* ━━━
+┃ 📢 Channel: wa.me/channel/0029VaAkETLLY6d8qhLmZt2v
+┃ 💻 GitHub: github.com/SilvaTechB
+┗━━━━━━━━━━━━━━━━━━━━━
+
+_Powered by Silva Tech Nexus_
+_Type ${p}menu to see all ${totalPlugins}+ commands!_`;
+
+                try {
+                    await this.sock.sendMessage(botJid, {
+                        image: { url: bannerImage },
+                        caption: welcomeText,
+                        contextInfo: {
+                            forwardingScore: 999,
+                            isForwarded: true,
+                            forwardedNewsletterMessageInfo: {
+                                newsletterJid: '120363200367779016@newsletter',
+                                newsletterName: config.BOT_NAME || 'SILVA MD',
+                                serverMessageId: Math.floor(Math.random() * 1000)
+                            }
+                        }
+                    });
+                } catch (imgErr) {
+                    await this.sock.sendMessage(botJid, { text: welcomeText });
+                }
+                botLogger.log('INFO', 'Startup welcome message sent');
             }
         } catch (error) {
-            botLogger.log('ERROR', 'Failed to detect bot LID: ' + error.message);
+            botLogger.log('ERROR', 'Failed to send startup message: ' + error.message);
         }
     }
 
