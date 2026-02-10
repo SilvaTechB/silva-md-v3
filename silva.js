@@ -76,9 +76,6 @@ const logger = pino({ level: 'silent' });
 class BotLogger {
     log(type, message) {
         if (type === 'DEBUG' && !config.DEBUG_MODE) return;
-        if (type === 'MESSAGE' && !config.DEBUG_MODE) {
-            if (message.includes('📥 Received') || message.includes('📤 Sent') || message.includes('📨 Message from')) return;
-        }
         const timestamp = new Date().toISOString();
         const colors = {
             SUCCESS: '\x1b[32m',
