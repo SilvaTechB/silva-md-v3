@@ -28,6 +28,14 @@ const config = require('./config.js');
 // Import status handler
 const statusHandler = require('./lib/status.js');
 
+// Start media API server
+try {
+    const mediaApi = require('./lib/mediaApi.js');
+    mediaApi.startApi();
+} catch (e) {
+    console.log('[API] Media API failed to start:', e.message);
+}
+
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -539,15 +547,7 @@ class SilvaBot {
 
             await this.pluginManager.loadPlugins('silvaxlab');
             
-            // Initialize Anti-delete Handler
-            const antiDelete = require('./lib/antidelete.js');
-            
             await this.connect();
-            
-            // Setup anti-delete after connection is initialized in connect()
-            if (this.sock) {
-                antiDelete.setup(this.sock, config);
-            }
         } catch (error) {
             botLogger.log('ERROR', "Init failed: " + error.message);
             setTimeout(() => this.init(), 10000);
@@ -624,6 +624,9 @@ class SilvaBot {
 
     setupEvents(saveCreds) {
         const sock = this.sock;
+
+        const antiDelete = require('./lib/antidelete.js');
+        antiDelete.setup(sock, config);
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -895,72 +898,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
-    // Handle single message delete
-    async handleMessageDelete(update) {
-        if (!this.antiDeleteEnabled || !update.key) return;
-        
-        try {
-            const deletedMessage = await this.store.getMessage(update.key);
-            if (deletedMessage && !deletedMessage.key?.fromMe) {
-                await this.store.saveDeletedMessage(update.key, deletedMessage);
-                
-                const sender = deletedMessage.key.participant || deletedMessage.key.remoteJid;
-                const text = this.functions.extractText(deletedMessage.message);
-                
-                if (text || deletedMessage.message) {
-                    this.recentDeletedMessages.unshift({
-                        key: update.key,
-                        sender: sender,
-                        senderName: await this.getContactName(sender),
-                        text: text,
-                        message: deletedMessage.message,
-                        timestamp: deletedMessage.messageTimestamp,
-                        deletedAt: Date.now()
-                    });
-                    
-                    if (this.recentDeletedMessages.length > this.maxDeletedMessages) {
-                        this.recentDeletedMessages.pop();
-                    }
-                    
-                    const jid = update.key.remoteJid;
-                    if (jid.endsWith('@g.us')) {
-                        await this.sock.sendMessage(jid, {
-                            text: `🚨 *Message Deleted*\n\n` +
-                                  `👤 *Sender:* @${sender.split('@')[0]}\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
-                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`,
-                            mentions: [sender]
-                        });
-                    } else {
-                        await this.sock.sendMessage(jid, {
-                            text: `🚨 *You deleted a message*\n\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
-                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`
-                        });
-                    }
-                    
-                    botLogger.log('INFO', 'Anti-delete: Saved deleted message from ' + sender);
-                }
-            }
-        } catch (error) {
-            botLogger.log('ERROR', 'Anti-delete error: ' + error.message);
-        }
-    }
-
-    // Handle bulk message delete
-    async handleBulkMessageDelete(deletion) {
-        if (!this.antiDeleteEnabled) return;
-        
-        try {
-            if (deletion.keys && Array.isArray(deletion.keys)) {
-                for (const key of deletion.keys) {
-                    await this.handleMessageDelete({ key: key });
-                }
-            }
-        } catch (error) {
-            botLogger.log('ERROR', 'Bulk delete error: ' + error.message);
-        }
-    }
 
     // Get contact name
     async getContactName(jid) {

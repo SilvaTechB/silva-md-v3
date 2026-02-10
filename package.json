@@ -6,9 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "setup": "node setup.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "heroku-postbuild": "echo 'Silva MD Bot deployed successfully!'"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "whatsapp",
@@ -22,33 +20,23 @@
   "author": "Silva Tech Nexus",
   "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "npm:dgxeon-soket@^7.0.3",
     "@hapi/boom": "^10.0.1",
-    "api-dylux": "^1.8.3",
-    "jimp": "^0.16.13",
-    "sharp": "0.32.6",
     "axios": "^1.6.2",
-    "chalk": "^5.4.1",
-    "dotenv": "^16.3.1",
-    "moment": "^2.29.4",
-    "qrcode-terminal": "^0.12.0",
-    "pino": "^8.16.1",
-    "pino-pretty": "^11.2.1",
-    "ws": "^8.14.2",
-    "node-cache": "^5.1.2",
-    "lodash": "^4.17.21",
     "cheerio": "^1.0.0-rc.12",
+    "dgxeon-soket": "^7.0.3",
+    "dotenv": "^16.3.1",
+    "express": "^5.2.1",
     "fluent-ffmpeg": "^2.1.2",
     "form-data": "^4.0.0",
-    "ruhend-scraper": "^8.0.3",
-    "link-preview-js": "^3.0.5",
-    "ytdl-core": "^4.11.5",
-    "yt-search": "^2.10.4",
+    "g-i-s": "^2.1.6",
+    "node-cache": "^5.1.2",
+    "pino": "^8.16.1",
+    "pino-pretty": "^11.2.1",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "0.32.6",
     "translate-google": "^1.5.0",
-    "cowsay": "^1.5.0",
-    "youtube-yts": "^2.0.0",
-    "youtubedl-core": "^4.11.7",
-    "g-i-s": "^2.1.6"
+    "ws": "^8.14.2",
+    "yt-search": "^2.10.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

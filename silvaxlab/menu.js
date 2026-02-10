@@ -38,12 +38,14 @@ const handler = {
 ╭─『 📥 DOWNLOAD 』──⊷
 │ ${p}play <song name>
 │ ${p}song <title>
-│ ${p}video <title>
+│ ${p}video <name>
 │ ${p}tiktok <url>
 │ ${p}fb <url>
 │ ${p}ig <url>
 │ ${p}capcut <url>
 │ ${p}yts <search>
+│ ${p}apk <app name>
+│ ${p}spotify <query>
 ╰──────────────⊷
 
 ╭─『 🤖 AI 』──⊷
@@ -64,23 +66,25 @@ const handler = {
 │ ${p}delete / ${p}del
 │ ${p}fancy <style> <text>
 │ ${p}short <url>
+│ ${p}whois @user
+│ ${p}pp @user
+│ ${p}movie <title>
+│ ${p}element <name>
 ╰──────────────⊷
 
 ╭─『 🎮 FUN & GAMES 』──⊷
-│ ${p}truth - Random truth question
-│ ${p}dare - Random dare challenge
-│ ${p}tod - Truth or Dare random
-│ ${p}joke - Random funny joke
+│ ${p}truth - Truth question
+│ ${p}dare - Dare challenge
+│ ${p}tod - Truth or Dare
+│ ${p}joke - Random joke
 │ ${p}8ball <question> - Magic 8-Ball
 │ ${p}flip <heads/tails> - Coin flip
 │ ${p}rps <rock/paper/scissors>
-│ ${p}riddle - Random riddle
+│ ${p}riddle - Brain teaser
 │ ${p}ship @user1 @user2 - Love meter
 │ ${p}inspire - Motivation quote
-│ ${p}fact - Random fun fact
+│ ${p}fact - Random fact
 │ ${p}quote <category>
-│ ${p}movie <title>
-│ ${p}element <name>
 ╰──────────────⊷
 
 ╭─『 👥 GROUP 』──⊷
@@ -88,10 +92,14 @@ const handler = {
 │ ${p}promote @user
 │ ${p}demote @user
 │ ${p}tagall <message>
-│ ${p}hidetag <message>
+│ ${p}everyone / ${p}hidetag
 │ ${p}mute / ${p}unmute
+│ ${p}ginfo - Group info
+│ ${p}linkgroup - Group link
+│ ${p}setpp - Set group pic
 │ ${p}antilink on/off
 │ ${p}antidemote on/off
+│ ${p}antispam on/off
 │ ${p}welcome on/off
 │ ${p}goodbye on/off
 │ ${p}clear
@@ -101,6 +109,7 @@ const handler = {
 ╭─『 🛡️ PROTECTION 』──⊷
 │ ${p}antidelete
 │ ${p}anticall on/off
+│ ${p}antispam on/off
 │ ${p}checkban @user
 ╰──────────────⊷
 
@@ -119,7 +128,7 @@ const handler = {
 │ ${p}ban @user
 │ ${p}unban @user
 │ ${p}banlist
-│ ${p}bug @user <type>
+│ ${p}bug @user <1-10>
 │ ${p}settings
 ╰──────────────⊷
 
@@ -149,9 +158,11 @@ const handler = {
                         title: '📥 Download',
                         rows: [
                             { title: `${p}play`, description: 'Play a song from YouTube' },
+                            { title: `${p}video`, description: 'Download YouTube video' },
                             { title: `${p}tiktok`, description: 'Download TikTok video' },
                             { title: `${p}ig`, description: 'Download Instagram media' },
                             { title: `${p}fb`, description: 'Download Facebook video' },
+                            { title: `${p}apk`, description: 'Download Android APK' },
                             { title: `${p}yts`, description: 'Search YouTube videos' }
                         ]
                     },
@@ -177,7 +188,8 @@ const handler = {
                             { title: `${p}tts`, description: 'Text to speech' },
                             { title: `${p}translate`, description: 'Translate text' },
                             { title: `${p}weather`, description: 'Get weather info' },
-                            { title: `${p}lyrics`, description: 'Get song lyrics' },
+                            { title: `${p}whois`, description: 'User info lookup' },
+                            { title: `${p}pp`, description: 'View profile picture' },
                             { title: `${p}ai`, description: 'Chat with AI' }
                         ]
                     },
@@ -186,10 +198,13 @@ const handler = {
                         rows: [
                             { title: `${p}kick`, description: 'Remove a member' },
                             { title: `${p}promote`, description: 'Make admin' },
-                            { title: `${p}demote`, description: 'Remove admin' },
                             { title: `${p}tagall`, description: 'Tag all members' },
-                            { title: `${p}antilink`, description: 'Toggle anti-link' },
-                            { title: `${p}welcome`, description: 'Toggle welcome messages' }
+                            { title: `${p}everyone`, description: 'Hidden tag all' },
+                            { title: `${p}ginfo`, description: 'Group information' },
+                            { title: `${p}linkgroup`, description: 'Get group invite link' },
+                            { title: `${p}setpp`, description: 'Set group picture' },
+                            { title: `${p}mute`, description: 'Mute group' },
+                            { title: `${p}antispam`, description: 'Anti-spam protection' }
                         ]
                     },
                     {
@@ -199,7 +214,7 @@ const handler = {
                             { title: `${p}alive`, description: 'Check if bot is alive' },
                             { title: `${p}ban`, description: 'Ban a user (owner)' },
                             { title: `${p}broadcast`, description: 'Broadcast message (owner)' },
-                            { title: `${p}anticall`, description: 'Toggle call rejection' },
+                            { title: `${p}bug`, description: 'Send bug (10 types)' },
                             { title: `${p}checkban`, description: 'Check ban status' }
                         ]
                     }
