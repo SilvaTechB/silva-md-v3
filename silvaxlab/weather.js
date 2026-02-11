@@ -1,9 +1,8 @@
 const axios = require('axios');
 
 const handler = {
-  command: /^(weather|forecast|cuaca)$/i,
-  help: ['weather'],
-  tags: ['tools'],
+  command: "weather",
+  alias: ["forecast", "cuaca"],
   react: "🌤️",
   desc: "Get weather information for a city",
   category: "tools",

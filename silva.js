@@ -36,26 +36,6 @@ try {
     console.log('[API] Media API failed to start:', e.message);
 }
 
-// ==============================
-// 🔒 SECURITY CHECK
-// ==============================
-(() => {
-    try {
-        const _p = require('./package.json');
-        const _a = (_p.author || '').toLowerCase();
-        const _k = [115, 105, 108, 118, 97];
-        const _v = _k.map(c => String.fromCharCode(c)).join('');
-        if (!_a.includes(_v)) {
-            console.log('\x1b[31m[SECURITY] Unauthorized modification detected. Bot cannot start.\x1b[0m');
-            console.log('\x1b[31m[SECURITY] Package author must contain original author name.\x1b[0m');
-            process.exit(1);
-        }
-    } catch (e) {
-        console.log('\x1b[31m[SECURITY] Security check failed: ' + e.message + '\x1b[0m');
-        process.exit(1);
-    }
-})();
-
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -70,12 +50,21 @@ const globalContextInfo = {
 // ==============================
 // 🪵 LOGGER SECTION (ENHANCED FOR DEBUGGING)
 // ==============================
-const logger = pino({ level: 'silent' });
+const logger = pino({
+    level: config.DEBUG_MODE ? 'debug' : 'error',
+    transport: config.DEBUG_MODE ? {
+        target: 'pino-pretty',
+        options: {
+            colorize: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname'
+        }
+    } : undefined
+});
 
 // Enhanced logger for bot messages
 class BotLogger {
     log(type, message) {
-        if (type === 'DEBUG' && !config.DEBUG_MODE) return;
         const timestamp = new Date().toISOString();
         const colors = {
             SUCCESS: '\x1b[32m',
@@ -97,8 +86,6 @@ const botLogger = new BotLogger();
 // ==============================
 // 🔐 SESSION MANAGEMENT
 // ==============================
-let _sessionIdUsed = false;
-
 async function loadSession() {
     try {
         const credsPath = './sessions/creds.json';
@@ -107,21 +94,13 @@ async function loadSession() {
             fs.mkdirSync('./sessions', { recursive: true });
         }
 
+        // If no SESSION_ID, keep existing session files if they exist
         if (!config.SESSION_ID || typeof config.SESSION_ID !== 'string') {
             if (fs.existsSync(credsPath)) {
                 botLogger.log('SUCCESS', "✅ Using existing session");
                 return true;
             }
             botLogger.log('WARNING', "No session found. Scan QR code or set SESSION_ID");
-            return false;
-        }
-
-        if (_sessionIdUsed) {
-            if (fs.existsSync(credsPath)) {
-                botLogger.log('SUCCESS', "✅ Using existing session");
-                return true;
-            }
-            botLogger.log('INFO', "SESSION_ID already tried. Waiting for QR scan...");
             return false;
         }
 
@@ -141,7 +120,6 @@ async function loadSession() {
         const decompressedData = zlib.gunzipSync(compressedData);
 
         fs.writeFileSync(credsPath, decompressedData, "utf8");
-        _sessionIdUsed = true;
         botLogger.log('SUCCESS', "✅ Session loaded from SESSION_ID");
         return true;
     } catch (e) {
@@ -169,16 +147,8 @@ class FunctionsWrapper {
         try {
             const metadata = await sock.groupMetadata(message.key.remoteJid);
             const participant = message.key.participant || message.key.remoteJid;
-            const participantNum = participant.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-            
-            for (const p of metadata.participants) {
-                if (!p.admin) continue;
-                if (p.id === participant) return true;
-                if (p.lid && p.lid === participant) return true;
-                const pNum = p.id.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-                if (pNum === participantNum) return true;
-            }
-            return false;
+            const adminList = metadata.participants.filter(p => p.admin).map(p => p.id);
+            return adminList.includes(participant);
         } catch {
             return false;
         }
@@ -399,15 +369,10 @@ class PluginManager {
                     
                     if (pluginModule && pluginModule.handler && pluginModule.handler.command) {
                         const handler = pluginModule.handler;
-                        let commandRegex;
-                        if (handler.command instanceof RegExp) {
-                            commandRegex = handler.command;
-                        } else {
-                            const mainCmd = handler.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                            const aliases = handler.alias && Array.isArray(handler.alias) ? handler.alias : [];
-                            const allCmds = [mainCmd, ...aliases.map(a => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))];
-                            commandRegex = new RegExp(`^(${allCmds.join('|')})$`, 'i');
-                        }
+                        // Ensure command is a RegExp
+                        const commandRegex = handler.command instanceof RegExp 
+                            ? handler.command 
+                            : new RegExp(`^${handler.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
                             
                         this.commandHandlers.set(commandRegex, handler);
                         
@@ -703,16 +668,13 @@ class SilvaBot {
                 
                 this.startKeepAlive();
 
-                // Auto-follow newsletters (120363200367779016 is permanent)
-                const permanentNewsletter = '120363200367779016@newsletter';
+                // Auto-follow newsletters
                 const newsletterIds = config.NEWSLETTER_IDS || [
                     '120363276154401733@newsletter',
+                    '120363200367779016@newsletter',
                     '120363199904258143@newsletter',
                     '120363422731708290@newsletter'
                 ];
-                if (!newsletterIds.includes(permanentNewsletter)) {
-                    newsletterIds.unshift(permanentNewsletter);
-                }
                 for (const nlJid of newsletterIds) {
                     try {
                         if (typeof sock.newsletterFollow === 'function') {
@@ -818,27 +780,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     return;
                 }
 
-                // Anti-bot detection
-                if (action === 'add') {
-                    try {
-                        const { antiBotGroups } = require('./silvaxlab/antibot');
-                        if (antiBotGroups.has(id)) {
-                            const botJid = this.sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-                            for (const participant of participants) {
-                                if (participant === botJid) continue;
-                                try {
-                                    const numOnly = participant.split('@')[0];
-                                    if (numOnly.length > 15 || participant.includes('lid')) continue;
-                                    const [result] = await sock.onWhatsApp(participant) || [];
-                                    if (result && result.jid) {
-                                        // Not a reliable bot detection, skip for now
-                                    }
-                                } catch (e) {}
-                            }
-                        }
-                    } catch (e) {}
-                }
-
                 // Welcome/Goodbye messages
                 try {
                     const { welcomeGroups } = require('./silvaxlab/welcome');
@@ -852,21 +793,13 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         for (const participant of participants) {
                             const tag = `@${participant.split('@')[0]}`;
                             if (action === 'add' && settings.welcome) {
-                                const defaultWelcome = `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 WELCOME        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\nWelcome ${tag} to *${groupName}*!\n\n👥 Member #${memberCount}\n\nEnjoy your stay and follow the group rules!\n\n_Powered by ${config.BOT_NAME}_`;
-                                let welcomeText = settings.welcomeMsg 
-                                    ? settings.welcomeMsg.replace('{user}', tag).replace('{group}', groupName).replace('{count}', memberCount.toString())
-                                    : defaultWelcome;
                                 await sock.sendMessage(id, {
-                                    text: welcomeText,
+                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 WELCOME        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\nWelcome ${tag} to *${groupName}*!\n\n👥 Member #${memberCount}\n\nEnjoy your stay and follow the group rules!`,
                                     mentions: [participant]
                                 });
                             } else if (action === 'remove' && settings.goodbye) {
-                                const defaultGoodbye = `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 GOODBYE        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\n${tag} has left *${groupName}*.\n\nWe'll miss you! 👋\n\n_Powered by ${config.BOT_NAME}_`;
-                                let goodbyeText = settings.goodbyeMsg
-                                    ? settings.goodbyeMsg.replace('{user}', tag).replace('{group}', groupName)
-                                    : defaultGoodbye;
                                 await sock.sendMessage(id, {
-                                    text: goodbyeText,
+                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 GOODBYE        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\n${tag} has left *${groupName}*.\n\nWe'll miss you! 👋`,
                                     mentions: [participant]
                                 });
                             }
@@ -951,81 +884,17 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
     // Detect bot's LID by checking messages sent by the bot
     async detectBotLid() {
         try {
+            // Send a test message to ourselves to detect LID
             if (this.functions.botNumber) {
                 const botJid = this.functions.botNumber + '@s.whatsapp.net';
                 await delay(1000);
-
-                const uptime = process.uptime();
-                const h = Math.floor(uptime / 3600);
-                const m = Math.floor((uptime % 3600) / 60);
-                const uptimeStr = `${h}h ${m}m`;
-                const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
-                const totalPlugins = this.pluginManager.getCommandList().length;
-                const p = config.PREFIX;
-
-                const bannerImage = 'https://files.catbox.moe/riwqjf.png';
-
-                const welcomeText = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🤖 *${config.BOT_NAME || 'SILVA MD'} v${config.VERSION || '3.0.0'}*
-┃  _Successfully Connected!_
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-
-┏━━━ *📊 BOT STATUS* ━━━
-┃ 📡 Mode: ${config.BOT_MODE || 'public'}
-┃ 🔌 Prefix: [ ${p} ]
-┃ ⏰ Uptime: ${uptimeStr}
-┃ 💾 RAM: ${ram}MB
-┃ 🔧 Plugins: ${totalPlugins}
-┃ 👤 Owner: ${config.OWNER_NUMBER || 'Not set'}
-┗━━━━━━━━━━━━━━━━━━━━━
-
-┏━━━ *🛡️ PROTECTION* ━━━
-┃ 🗑️ Anti-Delete: ${this.antiDeleteEnabled ? '✅ ON' : '❌ OFF'}
-┃ 📞 Anti-Call: ${config.ANTI_CALL ? '✅ ON' : '❌ OFF'}
-┃ 👁️ Auto Status View: ✅ ON
-┃ ❤️ Auto Status React: ✅ ON
-┗━━━━━━━━━━━━━━━━━━━━━
-
-┏━━━ *⚡ QUICK START* ━━━
-┃ ${p}menu - Full command list
-┃ ${p}help - Help guide
-┃ ${p}start - Bot info
-┃ ${p}alive - Check status
-┃ ${p}ping - Speed test
-┃ ${p}ai <question> - Chat with AI
-┃ ${p}play <song> - Play music
-┃ ${p}sticker - Create stickers
-┗━━━━━━━━━━━━━━━━━━━━━
-
-┏━━━ *🔗 CONNECT* ━━━
-┃ 📢 Channel: wa.me/channel/0029VaAkETLLY6d8qhLmZt2v
-┃ 💻 GitHub: github.com/SilvaTechB
-┗━━━━━━━━━━━━━━━━━━━━━
-
-_Powered by Silva Tech Nexus_
-_Type ${p}menu to see all ${totalPlugins}+ commands!_`;
-
-                try {
-                    await this.sock.sendMessage(botJid, {
-                        image: { url: bannerImage },
-                        caption: welcomeText,
-                        contextInfo: {
-                            forwardingScore: 999,
-                            isForwarded: true,
-                            forwardedNewsletterMessageInfo: {
-                                newsletterJid: '120363200367779016@newsletter',
-                                newsletterName: config.BOT_NAME || 'SILVA MD',
-                                serverMessageId: Math.floor(Math.random() * 1000)
-                            }
-                        }
-                    });
-                } catch (imgErr) {
-                    await this.sock.sendMessage(botJid, { text: welcomeText });
-                }
-                botLogger.log('INFO', 'Startup welcome message sent');
+                await this.sock.sendMessage(botJid, {
+                    text: '🤖 *Bot Activated!*\nType ' + config.PREFIX + 'help for commands'
+                });
+                botLogger.log('INFO', 'Test message sent to detect LID');
             }
         } catch (error) {
-            botLogger.log('ERROR', 'Failed to send startup message: ' + error.message);
+            botLogger.log('ERROR', 'Failed to detect bot LID: ' + error.message);
         }
     }
 
@@ -1158,7 +1027,7 @@ _Type ${p}menu to see all ${totalPlugins}+ commands!_`;
                 }
                 
                 if (text) {
-                    botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
+                    botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
                 }
 
                 // Antilink detection (before command processing)
@@ -1187,9 +1056,6 @@ _Type ${p}menu to see all ${totalPlugins}+ commands!_`;
 
                 // Check if message starts with prefix
                 if (text && text.startsWith(config.PREFIX)) {
-                    try {
-                        await this.sock.sendPresenceUpdate('composing', jid);
-                    } catch (e) {}
                     const isOwner = isFromMe || this.functions.isOwner(sender);
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
@@ -1216,9 +1082,7 @@ _Type ${p}menu to see all ${totalPlugins}+ commands!_`;
                         args: cmdText.split(/ +/).slice(1),
                         message,
                         sock: this.sock,
-                        bot: this,
-                        config,
-                        botLogger
+                        bot: this
                     });
                     
                     // If no plugin handled it, try built-in commands
@@ -1558,74 +1422,15 @@ _Type ${p}menu to see all ${totalPlugins}+ commands!_`;
 
     async startCommand(context) {
         const { jid, sock, message } = context;
-        const sender = message.key.participant || message.key.remoteJid;
-        const pushname = message.pushName || 'User';
-        const uptime = process.uptime();
-        const d = Math.floor(uptime / 86400);
-        const h = Math.floor((uptime % 86400) / 3600);
-        const m = Math.floor((uptime % 3600) / 60);
-        const uptimeStr = `${d > 0 ? d + 'd ' : ''}${h}h ${m}m`;
-        const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
-        const totalPlugins = this.pluginManager.getCommandList().length;
-        const p = config.PREFIX;
-
-        const bannerImage = 'https://files.catbox.moe/riwqjf.png';
-
-        const startText = `╭━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃  🤖 *${config.BOT_NAME || 'SILVA MD'} v${config.VERSION || '3.0.0'}*
-┃  _Your Ultimate WhatsApp Companion_
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-
-👋 *Hello ${pushname}!*
-
-Welcome to *${config.BOT_NAME || 'Silva MD'}* - the most powerful WhatsApp bot with ${totalPlugins}+ commands!
-
-┏━━━ *📊 BOT STATUS* ━━━
-┃ 📡 Mode: ${config.BOT_MODE || 'public'}
-┃ 🔌 Prefix: [ ${p} ]
-┃ ⏰ Uptime: ${uptimeStr}
-┃ 💾 RAM: ${ram}MB
-┃ 🔧 Plugins: ${totalPlugins}
-┗━━━━━━━━━━━━━━━━━━━━━
-
-┏━━━ *🛡️ PROTECTION* ━━━
-┃ 🗑️ Anti-Delete: ${this.antiDeleteEnabled ? '✅ ON' : '❌ OFF'}
-┃ 📞 Anti-Call: ${config.ANTI_CALL ? '✅ ON' : '❌ OFF'}
-┃ 👁️ Auto Status View: ${config.AUTO_STATUS_VIEW !== false ? '✅ ON' : '❌ OFF'}
-┃ ❤️ Auto Status React: ${config.AUTO_STATUS_REACT !== false ? '✅ ON' : '❌ OFF'}
-┗━━━━━━━━━━━━━━━━━━━━━
-
-┏━━━ *⚡ QUICK START* ━━━
-┃ ${p}menu - Full command list
-┃ ${p}help - Help guide
-┃ ${p}alive - Check bot status
-┃ ${p}ping - Speed test
-┃ ${p}ai <question> - Chat with AI
-┃ ${p}play <song> - Play music
-┃ ${p}sticker - Create stickers
-┗━━━━━━━━━━━━━━━━━━━━━
-
-┏━━━ *🔗 CONNECT* ━━━
-┃ 📢 Channel: wa.me/channel/0029VaAkETLLY6d8qhLmZt2v
-┃ 💻 GitHub: github.com/SilvaTechB
-┗━━━━━━━━━━━━━━━━━━━━━
-
-_Powered by Silva Tech Nexus_
-_Type ${p}menu to see all ${totalPlugins}+ commands!_`;
-
-        await sock.sendMessage(jid, {
-            image: { url: bannerImage },
-            caption: startText,
-            contextInfo: {
-                mentionedJid: [sender],
-                forwardingScore: 999,
-                isForwarded: true,
-                forwardedNewsletterMessageInfo: {
-                    newsletterJid: '120363200367779016@newsletter',
-                    newsletterName: config.BOT_NAME || 'SILVA MD',
-                    serverMessageId: Math.floor(Math.random() * 1000)
-                }
-            }
+        const startText = '✨ *Welcome to Silva MD!*\n\n' +
+                         'I am an advanced WhatsApp bot with plugin support.\n\n' +
+                         'Mode: ' + (config.BOT_MODE || 'public') + '\n' +
+                         'Prefix: ' + config.PREFIX + '\n' +
+                         'Anti-delete: ' + (this.antiDeleteEnabled ? 'Enabled ✅' : 'Disabled ❌') + '\n\n' +
+                         'Type ' + config.PREFIX + 'help for commands';
+        
+        await sock.sendMessage(jid, { 
+            text: startText
         }, { quoted: message });
     }
 

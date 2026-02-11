@@ -22,8 +22,7 @@ Silva MD Bot is a WhatsApp bot built with Node.js using the Baileys library. It 
 - **Anti-Call**: Automatically rejects incoming calls (except from owner)
 - **Anti-Spam**: Detects and warns spam behavior in groups
 - **Welcome/Goodbye**: Configurable welcome and goodbye messages per group
-- **Anti-Bot**: Detects and removes other bots from groups when enabled
-- **Plugin System**: 87 commands loaded from `silvaxlab/` directory
+- **Plugin System**: 80+ commands loaded from `silvaxlab/` directory
 - **Self-Hosted Media API**: Express server on port 3001 using yt-dlp for reliable media downloads
 - **AI Chat**: GPT/AI integration for conversational AI
 - **TTS**: Text-to-speech in 19+ languages
@@ -42,13 +41,7 @@ Silva MD Bot is a WhatsApp bot built with Node.js using the Baileys library. It 
 - **Mute/Unmute**: Mute/unmute group chat
 - **Everyone/Hidetag**: Tag all members without showing mentions
 - **Fun & Games**: Truth/Dare, 8-Ball, Jokes, Riddles, Coin Flip, RPS, Love Meter, Facts, Quotes
-- **Warn System**: 3-strike warning system that auto-kicks on 3rd warn
-- **Polls**: Native WhatsApp poll creation
-- **Announcement Mode**: Toggle group announcement mode
-- **Group Description**: Set group description via command
-- **List Admins**: Show all group admins
-- **Revoke Link**: Reset group invite link
-- **Interactive Menu**: Categorized command display with banner image
+- **Interactive Menu**: List messages with categorized command sections and quick-reply buttons
 
 ## Configuration
 Environment variables:
@@ -76,11 +69,8 @@ The bot runs via `node index.js` which starts:
 - **Package.json**: Uses `dgxeon-soket` (custom Baileys fork). Express added for API server.
 
 ## Recent Changes
-- 2026-02-10: v3.4 - Full plugin audit and fix. Fixed BotLogger suppressing message logs. Installed 7 missing npm deps (axios, yt-search, node-fetch@2, sharp, fluent-ffmpeg, google-tts-api, translate-google). Fixed 4 plugins with string commands to use RegExp (lyrics, tourl, translate, weather). Fixed groupevent.js replacing non-existent message.reply() with sock.sendMessage(). Fixed autostatus.js and moderation.js to use imported downloadMediaMessage instead of broken sock.downloadMediaMessage(). All 87 plugins load with zero errors.
-- 2026-02-10: v3.3 - Replaced JSON health check with modern HTML dashboard (live uptime counter, plugin count, memory usage, protection status, bot config). Cleaned up obfuscated index.js.
-- 2026-02-10: v3.2 - Created antibot plugin. Fixed ai.js/gpt.js command conflict (ai.js now only /^(ai)$/, gpt.js handles gpt/chatgpt/ask). Removed all broken templateButtons/sections code from alive.js, ping.js, menu.js (deprecated in modern Baileys). Rewrote start command with comprehensive info display (uptime, RAM, plugin count, protection status, quick start guide, banner image). Updated menu with all new plugins (warn, poll, announce, gdesc, admins, revoke, antibot, setwelcome, setgoodbye). Reduced status handler log verbosity. Total: 87 plugins.
-- 2026-02-10: Major upgrade v3.1 - Fixed antidelete, created self-hosted Media API server, enhanced bug plugin, added 10 new plugins, updated menu. Total: 80 plugins.
-- 2026-02-10: Fixed sticker plugin, music plugin, added 9 fun plugins. Total: 70 plugins.
+- 2026-02-10: Major upgrade v3.1 - Fixed antidelete (moved setup to setupEvents for reconnection support, added setupId to prevent duplicate handlers). Created self-hosted Media API server (lib/mediaApi.js) using Express + yt-dlp for YouTube/TikTok/Instagram/Facebook downloads on port 3001. Enhanced bug plugin (10 types: text bomb, emoji, blank, zalgo, reverse, vcard bomb, contact array, forward flood, location spam, giant wall). Added 10 new plugins: video download, APK download, profile picture viewer, whois/user info, group info, mute/unmute, group link, set group picture, everyone/hidetag, antispam. Cleaned up package.json. Updated music plugin to use self-hosted API first. Updated menu with all 80+ commands. Total: 80 plugins.
+- 2026-02-10: Fixed sticker plugin, music plugin, added 9 fun plugins, interactive buttons. Total: 70 plugins.
 - 2026-02-09: Speed & fix update, ban system, antilink, anticall, bug plugin. Total: 61 plugins.
 - 2026-02-09: Fixed command handling, antidelete, added 13 new plugins. Total: 55+ plugins.
 - 2026-02-08: Initial Replit setup

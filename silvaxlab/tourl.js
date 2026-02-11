@@ -3,14 +3,13 @@ const fs = require('fs');
 const { getContentType } = require('@whiskeysockets/baileys');
 
 const handler = {
-  command: /^(tourl|url|makeurl)$/i,
-  help: ['tourl'],
-  tags: ['tools'],
+  command: "tourl",
+  alias: ["url", "makeurl"],
   react: "🔗",
   desc: "Convert image/video to a URL",
   category: "tools",
 
-  execute: async ({ sock, message, jid: chatJid, botLogger }) => {
+  execute: async ({ sock, message, botLogger }) => {
     try {
       const jid = message.key.remoteJid;
       const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage || message.message;
@@ -46,7 +45,7 @@ const handler = {
       }
 
     } catch (err) {
-      if (botLogger) botLogger.log('ERROR', 'ToURL error: ' + err.message); else console.log('[TOURL ERROR]', err.message);
+      botLogger.log('ERROR', "ToURL error: " + err.message);
       await sock.sendMessage(message.key.remoteJid, { text: "❌ Error: " + err.message }, { quoted: message });
     }
   }

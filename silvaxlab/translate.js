@@ -1,9 +1,8 @@
 const axios = require('axios');
 
 const handler = {
-  command: /^(translate|trt|tl)$/i,
-  help: ['translate'],
-  tags: ['tools'],
+  command: "translate",
+  alias: ["trt", "tl"],
   react: "🌍",
   desc: "Translate text to another language",
   category: "tools",

@@ -4,9 +4,8 @@ const fs = require('fs')
 // DO NOT import node-fetch
 
 const handler = {
-  command: /^(lyrics|lyric|lirik)$/i,
-  help: ['lyrics'],
-  tags: ['media'],
+  command: "lyrics",
+  alias: ["lyric", "lirik"],
   react: "🎵",
   desc: "Get song lyrics",
   category: "music",
