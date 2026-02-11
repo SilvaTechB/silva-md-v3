@@ -28,6 +28,14 @@ const config = require('./config.js');
 // Import status handler
 const statusHandler = require('./lib/status.js');
 
+// Start media API server
+try {
+    const mediaApi = require('./lib/mediaApi.js');
+    mediaApi.startApi();
+} catch (e) {
+    console.log('[API] Media API failed to start:', e.message);
+}
+
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -539,15 +547,7 @@ class SilvaBot {
 
             await this.pluginManager.loadPlugins('silvaxlab');
             
-            // Initialize Anti-delete Handler
-            const antiDelete = require('./lib/antidelete.js');
-            
             await this.connect();
-            
-            // Setup anti-delete after connection is initialized in connect()
-            if (this.sock) {
-                antiDelete.setup(this.sock, config);
-            }
         } catch (error) {
             botLogger.log('ERROR', "Init failed: " + error.message);
             setTimeout(() => this.init(), 10000);
@@ -624,6 +624,9 @@ class SilvaBot {
 
     setupEvents(saveCreds) {
         const sock = this.sock;
+
+        const antiDelete = require('./lib/antidelete.js');
+        antiDelete.setup(sock, config);
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -763,42 +766,74 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
         });
 
-        // Handle message updates
-        sock.ev.on('messages.update', async (updates) => {
-            for (const update of updates) {
-                try {
-                    if (update.update && (update.update === 'delete' || update.update.messageStubType === 7)) {
-                        await this.handleMessageDelete(update);
-                    }
-                } catch (error) {
-                    botLogger.log('ERROR', "Message update error: " + error.message);
-                }
-            }
-        });
-
-        // Handle message delete events
-        sock.ev.on('messages.delete', async (deletion) => {
-            try {
-                await this.handleBulkMessageDelete(deletion);
-            } catch (error) {
-                botLogger.log('ERROR', "Message delete error: " + error.message);
-            }
-        });
-
-        // Handle group participants updates
+        // Handle group participants updates (welcome/goodbye + bot added)
         sock.ev.on('group-participants.update', async (event) => {
             try {
-                if (this.sock.user && this.sock.user.id) {
-                    const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
-                    if (event.action === 'add' && event.participants.includes(botJid)) {
-                        await this.sendMessage(event.id, {
-                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
+                const { id, participants, action } = event;
+                const botJid = this.sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
+
+                if (action === 'add' && participants.includes(botJid)) {
+                    await this.sendMessage(id, {
+                        text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
+                    });
+                    botLogger.log('INFO', 'Bot added to group: ' + id);
+                    return;
+                }
+
+                // Welcome/Goodbye messages
+                try {
+                    const { welcomeGroups } = require('./silvaxlab/welcome');
+                    const settings = welcomeGroups.get(id);
+                    if (settings) {
+                        let metadata;
+                        try { metadata = await sock.groupMetadata(id); } catch(e) { metadata = { subject: 'Group' }; }
+                        const groupName = metadata.subject || 'Group';
+                        const memberCount = metadata.participants?.length || '?';
+
+                        for (const participant of participants) {
+                            const tag = `@${participant.split('@')[0]}`;
+                            if (action === 'add' && settings.welcome) {
+                                await sock.sendMessage(id, {
+                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 WELCOME        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\nWelcome ${tag} to *${groupName}*!\n\n👥 Member #${memberCount}\n\nEnjoy your stay and follow the group rules!`,
+                                    mentions: [participant]
+                                });
+                            } else if (action === 'remove' && settings.goodbye) {
+                                await sock.sendMessage(id, {
+                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 GOODBYE        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\n${tag} has left *${groupName}*.\n\nWe'll miss you! 👋`,
+                                    mentions: [participant]
+                                });
+                            }
+                        }
+                    }
+                } catch (e) {}
+
+            } catch (error) {
+                botLogger.log('ERROR', 'Group update error: ' + error.message);
+            }
+        });
+
+        // Anti-call: Reject incoming calls
+        sock.ev.on('call', async (calls) => {
+            try {
+                if (!config.ANTI_CALL) return;
+                for (const call of calls) {
+                    if (call.status === 'offer') {
+                        const callerJid = call.from;
+                        const isOwner = this.functions.isOwner(callerJid);
+                        if (isOwner) continue;
+
+                        try {
+                            await sock.rejectCall(call.id, callerJid);
+                        } catch (e) {}
+
+                        await sock.sendMessage(callerJid, {
+                            text: `🚫 *Calls are not allowed!*\n\n${config.BOT_NAME || 'Silva MD'} does not accept calls. Please send a text message instead.\n\n_This is an automated response._`
                         });
-                        botLogger.log('INFO', 'Bot added to group: ' + event.id);
+                        botLogger.log('INFO', `Rejected call from ${callerJid}`);
                     }
                 }
             } catch (error) {
-                // Silent fail
+                botLogger.log('ERROR', 'Anti-call error: ' + error.message);
             }
         });
 
@@ -863,72 +898,6 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
-    // Handle single message delete
-    async handleMessageDelete(update) {
-        if (!this.antiDeleteEnabled || !update.key) return;
-        
-        try {
-            const deletedMessage = await this.store.getMessage(update.key);
-            if (deletedMessage && !deletedMessage.key?.fromMe) {
-                await this.store.saveDeletedMessage(update.key, deletedMessage);
-                
-                const sender = deletedMessage.key.participant || deletedMessage.key.remoteJid;
-                const text = this.functions.extractText(deletedMessage.message);
-                
-                if (text || deletedMessage.message) {
-                    this.recentDeletedMessages.unshift({
-                        key: update.key,
-                        sender: sender,
-                        senderName: await this.getContactName(sender),
-                        text: text,
-                        message: deletedMessage.message,
-                        timestamp: deletedMessage.messageTimestamp,
-                        deletedAt: Date.now()
-                    });
-                    
-                    if (this.recentDeletedMessages.length > this.maxDeletedMessages) {
-                        this.recentDeletedMessages.pop();
-                    }
-                    
-                    const jid = update.key.remoteJid;
-                    if (jid.endsWith('@g.us')) {
-                        await this.sock.sendMessage(jid, {
-                            text: `🚨 *Message Deleted*\n\n` +
-                                  `👤 *Sender:* @${sender.split('@')[0]}\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
-                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`,
-                            mentions: [sender]
-                        });
-                    } else {
-                        await this.sock.sendMessage(jid, {
-                            text: `🚨 *You deleted a message*\n\n` +
-                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
-                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`
-                        });
-                    }
-                    
-                    botLogger.log('INFO', 'Anti-delete: Saved deleted message from ' + sender);
-                }
-            }
-        } catch (error) {
-            botLogger.log('ERROR', 'Anti-delete error: ' + error.message);
-        }
-    }
-
-    // Handle bulk message delete
-    async handleBulkMessageDelete(deletion) {
-        if (!this.antiDeleteEnabled) return;
-        
-        try {
-            if (deletion.keys && Array.isArray(deletion.keys)) {
-                for (const key of deletion.keys) {
-                    await this.handleMessageDelete({ key: key });
-                }
-            }
-        } catch (error) {
-            botLogger.log('ERROR', 'Bulk delete error: ' + error.message);
-        }
-    }
 
     // Get contact name
     async getContactName(jid) {
@@ -1061,17 +1030,48 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
                 }
 
+                // Antilink detection (before command processing)
+                if (text && isGroup) {
+                    try {
+                        const { antilinkGroups } = require('./silvaxlab/antlink');
+                        if (antilinkGroups.has(jid)) {
+                            const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|wa\.me\/[^\s]+|chat\.whatsapp\.com\/[^\s]+/i;
+                            if (linkRegex.test(text)) {
+                                const isAdmin = await this.functions.isAdmin(message, this.sock);
+                                const isOwner = isFromMe || this.functions.isOwner(sender);
+                                if (!isAdmin && !isOwner) {
+                                    try {
+                                        await this.sock.sendMessage(jid, { delete: message.key });
+                                        await this.sock.sendMessage(jid, {
+                                            text: `⚠️ @${sender.split('@')[0]}, links are not allowed in this group!`,
+                                            mentions: [sender]
+                                        });
+                                    } catch (e) {}
+                                    continue;
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                }
+
                 // Check if message starts with prefix
                 if (text && text.startsWith(config.PREFIX)) {
-                    botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${sender}`);
-                    
                     const isOwner = isFromMe || this.functions.isOwner(sender);
-                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
-                    // Send typing indicator
-                    try { await this.sock.sendPresenceUpdate('composing', jid); } catch(e) {}
+                    // Check if user is banned (skip for owner)
+                    if (!isOwner) {
+                        try {
+                            const { bannedUsers } = require('./silvaxlab/ban');
+                            if (bannedUsers.has(sender)) {
+                                await this.sock.sendMessage(jid, {
+                                    text: '🚫 You are banned from using this bot.',
+                                }, { quoted: message });
+                                continue;
+                            }
+                        } catch (e) {}
+                    }
                     
                     // Try plugin commands first
                     const executed = await this.pluginManager.executeCommand({
@@ -1085,16 +1085,12 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         bot: this
                     });
                     
-                    // Stop typing indicator
-                    try { await this.sock.sendPresenceUpdate('paused', jid); } catch(e) {}
-                    
                     // If no plugin handled it, try built-in commands
                     if (!executed) {
                         const args = cmdText.split(/ +/);
                         const command = args.shift().toLowerCase();
                         
                         if (this.commands[command]) {
-                            botLogger.log('COMMAND', `🛠️ Executing built-in command: ${command} for ${sender}`);
                             await this.commands[command]({
                                 jid,
                                 sender,
