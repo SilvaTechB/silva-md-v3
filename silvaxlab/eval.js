@@ -1,14 +1,14 @@
+// Clean Eval Plugin - Silva MD Bot
 const util = require('util')
 const config = require('../config')
-const { exec } = require('child_process')
 
 const handler = {
-    help: ['eval', 'ev', '$'],
+    help: ['eval', 'ev'],
     tags: ['owner'],
-    command: /^(eval|ev|\$)$/i,
-    owner: true,
+    command: /^(eval|ev)$/i,
+    owner: false,
 
-    execute: async ({ jid, sock, message, args, bot }) => {
+    execute: async ({ jid, sock, message, args }) => {
         try {
             const from = message.key.remoteJid
             const sender = message.key.participant || from
@@ -16,68 +16,79 @@ const handler = {
 
             if (!query) {
                 return sock.sendMessage(jid, {
-                    text: `╭━━━━━━━━━━━━━━━━━━━━╮
-┃   ⚡ EVAL ENGINE     ┃
-╰━━━━━━━━━━━━━━━━━━━━╯
+                    text: `┏━━━━━━━━━━━━━━━━━━━━┓
+┃   ᴇᴠᴀʟ ᴄᴏᴍᴍᴀɴᴅ    ┃
+┗━━━━━━━━━━━━━━━━━━━━┛
 
-*Usage:*
+ᴜsᴀɢᴇ:
 ${config.PREFIX}eval <code>
-${config.PREFIX}$ <code>
 
-*Examples:*
-${config.PREFIX}eval sock.user
+ᴇxᴀᴍᴘʟᴇs:
 ${config.PREFIX}eval message.key
+${config.PREFIX}eval sock.user
+${config.PREFIX}eval Object.keys(message)
 ${config.PREFIX}eval await sock.groupMetadata(from)
-${config.PREFIX}eval process.memoryUsage()
-${config.PREFIX}eval Object.keys(require('../config'))
 
-_Executes JavaScript with full bot context_
-_⚠️ Owner only command_`
+💡 Executes JavaScript code with full bot context`
                 }, { quoted: message })
             }
 
-            const m = message
-            const conn = sock
+            // Create safe execution context
+            const context = {
+                sock,
+                message,
+                mek: message,
+                from,
+                sender,
+                jid,
+                config,
+                args,
+                util,
+                console,
+                Buffer,
+                JSON,
+                Object,
+                Array,
+                String,
+                Number,
+                Math,
+                Date,
+                Promise,
+                require
+            }
 
             let result
             let executionTime
             const startTime = Date.now()
 
             try {
+                // Create async function for eval to support await
                 const asyncEval = new Function(
-                    'sock', 'conn', 'message', 'm', 'mek', 'from', 'sender', 'jid',
-                    'config', 'args', 'util', 'bot', 'console', 'Buffer', 'JSON',
-                    'Object', 'Array', 'String', 'Number', 'Math', 'Date',
-                    'Promise', 'require', 'process', 'exec',
+                    ...Object.keys(context),
                     `return (async () => { ${query.includes('return') ? query : `return ${query}`} })()`
                 )
 
-                result = await asyncEval(
-                    sock, sock, message, message, message, from, sender, jid,
-                    config, args, util, bot, console, Buffer, JSON,
-                    Object, Array, String, Number, Math, Date,
-                    Promise, require, process, exec
-                )
+                result = await asyncEval(...Object.values(context))
                 executionTime = Date.now() - startTime
 
             } catch (evalError) {
                 executionTime = Date.now() - startTime
                 
                 return sock.sendMessage(jid, {
-                    text: `╭━━━━━━━━━━━━━━━━━━━━╮
-┃   ❌ EVAL ERROR      ┃
-╰━━━━━━━━━━━━━━━━━━━━╯
+                    text: `┏━━━━━━━━━━━━━━━━━━━━┓
+┃   ᴇᴠᴀʟ ᴇʀʀᴏʀ      ┃
+┗━━━━━━━━━━━━━━━━━━━━┛
 
-*Error:* ${evalError.name}
-*Message:* ${evalError.message}
+❌ ${evalError.name}: ${evalError.message}
 
-*Input:*
-\`\`\`${query}\`\`\`
+ᴄᴏᴅᴇ:
+${query}
 
 ⏱️ Failed after ${executionTime}ms`
                 }, { quoted: message })
             }
 
+            // Format the result
             let formattedResult
             const resultType = typeof result
 
@@ -88,6 +99,7 @@ _⚠️ Owner only command_`
             } else if (resultType === 'function') {
                 formattedResult = `[Function: ${result.name || 'anonymous'}]`
             } else if (resultType === 'object') {
+                // Use util.inspect for objects
                 formattedResult = util.inspect(result, {
                     depth: 3,
                     colors: false,
@@ -101,22 +113,29 @@ _⚠️ Owner only command_`
                 formattedResult = String(result)
             }
 
+            // Truncate if too long
             const maxLength = 3000
             if (formattedResult.length > maxLength) {
                 formattedResult = formattedResult.substring(0, maxLength) + '\n\n... (truncated)'
             }
 
-            const output = `╭━━━━━━━━━━━━━━━━━━━━╮
-┃   ⚡ EVAL RESULT     ┃
-╰━━━━━━━━━━━━━━━━━━━━╯
+            const output = `┏━━━━━━━━━━━━━━━━━━━━┓
+┃   ᴇᴠᴀʟ ʀᴇsᴜʟᴛ    ┃
+┗━━━━━━━━━━━━━━━━━━━━┛
 
-*Input:*
-\`\`\`${query}\`\`\`
+┏─『 ɪɴᴘᴜᴛ 』──⊷
+│ ${query}
+┗──────────────⊷
 
-*Output:* (${resultType}) [${executionTime}ms]
-\`\`\`${formattedResult}\`\`\`
+┏─『 ᴏᴜᴛᴘᴜᴛ 』──⊷
+│ ᴛʏᴘᴇ: ${resultType}
+│ ᴛɪᴍᴇ: ${executionTime}ms
+┗──────────────⊷
 
-_⚡ Silva MD Eval Engine_`
+${formattedResult}
+
+━━━━━━━━━━━━━━━━━━━━
+⚡ sɪʟᴠᴀ ᴍᴅ ᴅɪᴀɢɴᴏsᴛɪᴄ ᴇɴɢɪɴᴇ`
 
             await sock.sendMessage(jid, {
                 text: output,
@@ -126,7 +145,7 @@ _⚡ Silva MD Eval Engine_`
                     isForwarded: true,
                     forwardedNewsletterMessageInfo: {
                         newsletterJid: '120363200367779016@newsletter',
-                        newsletterName: 'SILVA MD • EVAL',
+                        newsletterName: 'SILVA • EVAL LAB',
                         serverMessageId: Math.floor(Math.random() * 1000)
                     }
                 }
@@ -134,7 +153,16 @@ _⚡ Silva MD Eval Engine_`
 
         } catch (err) {
             await sock.sendMessage(jid, {
-                text: `❌ *System Error:* ${err.message}\n\n\`\`\`${err.stack}\`\`\``
+                text: `┏━━━━━━━━━━━━━━━━━━━━┓
+┃   sʏsᴛᴇᴍ ᴇʀʀᴏʀ    ┃
+┗━━━━━━━━━━━━━━━━━━━━┛
+
+❌ ${err.name}: ${err.message}
+
+sᴛᴀᴄᴋ:
+${err.stack}
+
+⚠️ Internal evaluation failure`
             }, { quoted: message })
         }
     }

@@ -63,20 +63,6 @@ END:VCARD`,
 
             await sock.sendMessage(jid, aliveMessage, { quoted: quotedContact })
 
-            try {
-                const config = require('../config')
-                const p = config.PREFIX
-                await sock.sendMessage(jid, {
-                    text: `🤖 *${config.BOT_NAME || 'Silva MD'} is Alive!*\n\n_Quick Actions:_`,
-                    footer: `${config.BOT_NAME || 'Silva MD'} v${config.VERSION || '3.0.0'}`,
-                    templateButtons: [
-                        { index: 1, urlButton: { displayText: '📢 Join Channel', url: 'https://whatsapp.com/channel/0029VaAkETLLY6d8qhLmZt2v' } },
-                        { index: 2, quickReplyButton: { displayText: '📋 Menu', id: `${p}menu` } },
-                        { index: 3, quickReplyButton: { displayText: '🏓 Ping', id: `${p}ping` } }
-                    ]
-                })
-            } catch (e) {}
-
         } catch (error) {
             await sock.sendMessage(jid, {
                 text: `❌ Alive command failed:\n${error.message}`

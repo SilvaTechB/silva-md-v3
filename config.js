@@ -29,9 +29,6 @@ module.exports = {
     STATUS_SAVE_TO_OWNER: process.env.STATUS_SAVE_TO_OWNER === 'true',
     STATUS_SAVE_PATH: process.env.STATUS_SAVE_PATH || './status_saves',
     
-    // Anti-call Settings
-    ANTI_CALL: process.env.ANTI_CALL !== 'false',
-    
     // Antidelete Settings
     ANTI_DELETE: process.env.ANTI_DELETE !== 'false' && process.env.ANTIDELETE !== 'false',
     ANTIDELETE: process.env.ANTI_DELETE !== 'false' && process.env.ANTIDELETE !== 'false',
@@ -50,6 +47,10 @@ module.exports = {
     
     // Newsletter Settings
     NEWSLETTER_IDS: process.env.NEWSLETTER_IDS ? process.env.NEWSLETTER_IDS.split(',') : null,
+    
+    // Pair Code Auth
+    USE_PAIR_CODE: process.env.USE_PAIR_CODE !== 'false',
+    PAIR_NUMBER: process.env.PAIR_NUMBER || process.env.OWNER_NUMBER || '',
     
     // Bot Info
     VERSION: '3.0.0',

@@ -41,8 +41,6 @@ const handler = {
                               `🤖 Bot Version: 1.0.0\n` +
                               `🌐 Status: Online`;
 
-            const config = require('../config')
-            const p = config.PREFIX
             await sock.sendMessage(jid, {
                 text: pingStats,
                 contextInfo: {
@@ -63,18 +61,6 @@ const handler = {
                     }
                 }
             }, { quoted: message });
-
-            try {
-                await sock.sendMessage(jid, {
-                    text: `🏓 *${config.BOT_NAME || 'Silva MD'} is Online!*\n⚡ Latency: ${latency}ms\n\n_Quick Actions:_`,
-                    footer: `${config.BOT_NAME || 'Silva MD'} v${config.VERSION || '3.0.0'}`,
-                    templateButtons: [
-                        { index: 1, quickReplyButton: { displayText: '📋 Menu', id: `${p}menu` } },
-                        { index: 2, quickReplyButton: { displayText: '🤖 Alive', id: `${p}alive` } },
-                        { index: 3, quickReplyButton: { displayText: '📊 Stats', id: `${p}stats` } }
-                    ]
-                })
-            } catch (e) {}
 
         } catch (err) {
             await sock.sendMessage(jid, {

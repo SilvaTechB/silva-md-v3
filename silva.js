@@ -28,14 +28,6 @@ const config = require('./config.js');
 // Import status handler
 const statusHandler = require('./lib/status.js');
 
-// Start media API server
-try {
-    const mediaApi = require('./lib/mediaApi.js');
-    mediaApi.startApi();
-} catch (e) {
-    console.log('[API] Media API failed to start:', e.message);
-}
-
 // Global Context Info
 const globalContextInfo = {
     forwardingScore: 999,
@@ -260,30 +252,22 @@ class FunctionsWrapper {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    // Extract text from message (with container unwrapping)
+    // Extract text from message
     extractText(message) {
         if (!message) return '';
         
-        let msg = message;
-        if (msg?.ephemeralMessage?.message) msg = msg.ephemeralMessage.message;
-        if (msg?.viewOnceMessage?.message) msg = msg.viewOnceMessage.message;
-        if (msg?.viewOnceMessageV2?.message) msg = msg.viewOnceMessageV2.message;
-        if (msg?.viewOnceMessageV2Extension?.message) msg = msg.viewOnceMessageV2Extension.message;
-        if (msg?.documentWithCaptionMessage?.message) msg = msg.documentWithCaptionMessage.message;
-        if (msg?.editedMessage?.message) msg = msg.editedMessage.message;
-        
-        if (msg.conversation) {
-            return msg.conversation;
-        } else if (msg.extendedTextMessage?.text) {
-            return msg.extendedTextMessage.text;
-        } else if (msg.imageMessage?.caption) {
-            return msg.imageMessage.caption;
-        } else if (msg.videoMessage?.caption) {
-            return msg.videoMessage.caption;
-        } else if (msg.documentMessage?.caption) {
-            return msg.documentMessage.caption;
-        } else if (msg.audioMessage?.caption) {
-            return msg.audioMessage.caption;
+        if (message.conversation) {
+            return message.conversation;
+        } else if (message.extendedTextMessage?.text) {
+            return message.extendedTextMessage.text;
+        } else if (message.imageMessage?.caption) {
+            return message.imageMessage.caption;
+        } else if (message.videoMessage?.caption) {
+            return message.videoMessage.caption;
+        } else if (message.documentMessage?.caption) {
+            return message.documentMessage.caption;
+        } else if (message.audioMessage?.caption) {
+            return message.audioMessage.caption;
         }
         return '';
     }
@@ -547,7 +531,15 @@ class SilvaBot {
 
             await this.pluginManager.loadPlugins('silvaxlab');
             
+            // Initialize Anti-delete Handler
+            const antiDelete = require('./lib/antidelete.js');
+            
             await this.connect();
+            
+            // Setup anti-delete after connection is initialized in connect()
+            if (this.sock) {
+                antiDelete.setup(this.sock, config);
+            }
         } catch (error) {
             botLogger.log('ERROR', "Init failed: " + error.message);
             setTimeout(() => this.init(), 10000);
@@ -568,10 +560,12 @@ class SilvaBot {
             const { state, saveCreds } = await useMultiFileAuthState('./sessions');
             const { version } = await fetchLatestBaileysVersion();
             
+            const usePairCode = config.USE_PAIR_CODE && !state.creds.registered;
+            
             this.sock = makeWASocket({
                 version,
                 logger: logger,
-                printQRInTerminal: true,
+                printQRInTerminal: !usePairCode,
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -605,6 +599,31 @@ class SilvaBot {
                 },
             });
 
+            // Pair code authentication
+            if (usePairCode) {
+                let pairNumber = config.PAIR_NUMBER || config.OWNER_NUMBER || '';
+                pairNumber = pairNumber.replace(/[^0-9]/g, '');
+                
+                if (pairNumber) {
+                    try {
+                        await delay(3000);
+                        const code = await this.sock.requestPairingCode(pairNumber);
+                        botLogger.log('BOT', `📱 PAIR CODE: ${code}`);
+                        botLogger.log('BOT', `Enter this code on WhatsApp > Linked Devices > Link with phone number`);
+                        console.log('\n' + '='.repeat(40));
+                        console.log(`  📱 YOUR PAIR CODE: ${code}`);
+                        console.log(`  Enter on WhatsApp > Linked Devices`);
+                        console.log('='.repeat(40) + '\n');
+                    } catch (err) {
+                        botLogger.log('ERROR', 'Pair code request failed: ' + err.message);
+                        botLogger.log('INFO', 'Falling back to QR code...');
+                    }
+                } else {
+                    botLogger.log('WARNING', 'No phone number configured for pair code. Set PAIR_NUMBER or OWNER_NUMBER env var.');
+                    botLogger.log('INFO', 'Falling back to QR code...');
+                }
+            }
+
             this.setupEvents(saveCreds);
             botLogger.log('SUCCESS', '✅ Bot initialized');
             this.reconnectAttempts = 0;
@@ -624,9 +643,6 @@ class SilvaBot {
 
     setupEvents(saveCreds) {
         const sock = this.sock;
-
-        const antiDelete = require('./lib/antidelete.js');
-        antiDelete.setup(sock, config);
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -766,74 +782,42 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
             }
         });
 
-        // Handle group participants updates (welcome/goodbye + bot added)
-        sock.ev.on('group-participants.update', async (event) => {
-            try {
-                const { id, participants, action } = event;
-                const botJid = this.sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-
-                if (action === 'add' && participants.includes(botJid)) {
-                    await this.sendMessage(id, {
-                        text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
-                    });
-                    botLogger.log('INFO', 'Bot added to group: ' + id);
-                    return;
-                }
-
-                // Welcome/Goodbye messages
+        // Handle message updates
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
                 try {
-                    const { welcomeGroups } = require('./silvaxlab/welcome');
-                    const settings = welcomeGroups.get(id);
-                    if (settings) {
-                        let metadata;
-                        try { metadata = await sock.groupMetadata(id); } catch(e) { metadata = { subject: 'Group' }; }
-                        const groupName = metadata.subject || 'Group';
-                        const memberCount = metadata.participants?.length || '?';
-
-                        for (const participant of participants) {
-                            const tag = `@${participant.split('@')[0]}`;
-                            if (action === 'add' && settings.welcome) {
-                                await sock.sendMessage(id, {
-                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 WELCOME        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\nWelcome ${tag} to *${groupName}*!\n\n👥 Member #${memberCount}\n\nEnjoy your stay and follow the group rules!`,
-                                    mentions: [participant]
-                                });
-                            } else if (action === 'remove' && settings.goodbye) {
-                                await sock.sendMessage(id, {
-                                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   👋 GOODBYE        ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\n${tag} has left *${groupName}*.\n\nWe'll miss you! 👋`,
-                                    mentions: [participant]
-                                });
-                            }
-                        }
+                    if (update.update && (update.update === 'delete' || update.update.messageStubType === 7)) {
+                        await this.handleMessageDelete(update);
                     }
-                } catch (e) {}
-
-            } catch (error) {
-                botLogger.log('ERROR', 'Group update error: ' + error.message);
+                } catch (error) {
+                    botLogger.log('ERROR', "Message update error: " + error.message);
+                }
             }
         });
 
-        // Anti-call: Reject incoming calls
-        sock.ev.on('call', async (calls) => {
+        // Handle message delete events
+        sock.ev.on('messages.delete', async (deletion) => {
             try {
-                if (!config.ANTI_CALL) return;
-                for (const call of calls) {
-                    if (call.status === 'offer') {
-                        const callerJid = call.from;
-                        const isOwner = this.functions.isOwner(callerJid);
-                        if (isOwner) continue;
+                await this.handleBulkMessageDelete(deletion);
+            } catch (error) {
+                botLogger.log('ERROR', "Message delete error: " + error.message);
+            }
+        });
 
-                        try {
-                            await sock.rejectCall(call.id, callerJid);
-                        } catch (e) {}
-
-                        await sock.sendMessage(callerJid, {
-                            text: `🚫 *Calls are not allowed!*\n\n${config.BOT_NAME || 'Silva MD'} does not accept calls. Please send a text message instead.\n\n_This is an automated response._`
+        // Handle group participants updates
+        sock.ev.on('group-participants.update', async (event) => {
+            try {
+                if (this.sock.user && this.sock.user.id) {
+                    const botJid = this.sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                    if (event.action === 'add' && event.participants.includes(botJid)) {
+                        await this.sendMessage(event.id, {
+                            text: '🤖 *' + config.BOT_NAME + ' Activated!*\nType ' + config.PREFIX + 'menu for commands'
                         });
-                        botLogger.log('INFO', `Rejected call from ${callerJid}`);
+                        botLogger.log('INFO', 'Bot added to group: ' + event.id);
                     }
                 }
             } catch (error) {
-                botLogger.log('ERROR', 'Anti-call error: ' + error.message);
+                // Silent fail
             }
         });
 
@@ -898,6 +882,72 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
         }
     }
 
+    // Handle single message delete
+    async handleMessageDelete(update) {
+        if (!this.antiDeleteEnabled || !update.key) return;
+        
+        try {
+            const deletedMessage = await this.store.getMessage(update.key);
+            if (deletedMessage && !deletedMessage.key?.fromMe) {
+                await this.store.saveDeletedMessage(update.key, deletedMessage);
+                
+                const sender = deletedMessage.key.participant || deletedMessage.key.remoteJid;
+                const text = this.functions.extractText(deletedMessage.message);
+                
+                if (text || deletedMessage.message) {
+                    this.recentDeletedMessages.unshift({
+                        key: update.key,
+                        sender: sender,
+                        senderName: await this.getContactName(sender),
+                        text: text,
+                        message: deletedMessage.message,
+                        timestamp: deletedMessage.messageTimestamp,
+                        deletedAt: Date.now()
+                    });
+                    
+                    if (this.recentDeletedMessages.length > this.maxDeletedMessages) {
+                        this.recentDeletedMessages.pop();
+                    }
+                    
+                    const jid = update.key.remoteJid;
+                    if (jid.endsWith('@g.us')) {
+                        await this.sock.sendMessage(jid, {
+                            text: `🚨 *Message Deleted*\n\n` +
+                                  `👤 *Sender:* @${sender.split('@')[0]}\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
+                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`,
+                            mentions: [sender]
+                        });
+                    } else {
+                        await this.sock.sendMessage(jid, {
+                            text: `🚨 *You deleted a message*\n\n` +
+                                  `💬 *Message:* ${text || '[Media Message]'}\n\n` +
+                                  `Type \`${config.PREFIX}antidelete recover 1\` to recover`
+                        });
+                    }
+                    
+                    botLogger.log('INFO', 'Anti-delete: Saved deleted message from ' + sender);
+                }
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Anti-delete error: ' + error.message);
+        }
+    }
+
+    // Handle bulk message delete
+    async handleBulkMessageDelete(deletion) {
+        if (!this.antiDeleteEnabled) return;
+        
+        try {
+            if (deletion.keys && Array.isArray(deletion.keys)) {
+                for (const key of deletion.keys) {
+                    await this.handleMessageDelete({ key: key });
+                }
+            }
+        } catch (error) {
+            botLogger.log('ERROR', 'Bulk delete error: ' + error.message);
+        }
+    }
 
     // Get contact name
     async getContactName(jid) {
@@ -974,104 +1024,41 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                     this.functions.setBotLid(lid + '@lid');
                 }
 
-                // Unwrap message containers (ephemeral, viewOnce, etc.)
-                let msgContent = message.message;
-                if (msgContent?.ephemeralMessage?.message) {
-                    msgContent = msgContent.ephemeralMessage.message;
-                }
-                if (msgContent?.viewOnceMessage?.message) {
-                    msgContent = msgContent.viewOnceMessage.message;
-                }
-                if (msgContent?.viewOnceMessageV2?.message) {
-                    msgContent = msgContent.viewOnceMessageV2.message;
-                }
-                if (msgContent?.viewOnceMessageV2Extension?.message) {
-                    msgContent = msgContent.viewOnceMessageV2Extension.message;
-                }
-                if (msgContent?.documentWithCaptionMessage?.message) {
-                    msgContent = msgContent.documentWithCaptionMessage.message;
-                }
-                if (msgContent?.editedMessage?.message) {
-                    msgContent = msgContent.editedMessage.message;
-                }
-
                 // Extract text from message
                 let text = '';
-                if (msgContent?.conversation) {
-                    text = msgContent.conversation;
-                } else if (msgContent?.extendedTextMessage?.text) {
-                    text = msgContent.extendedTextMessage.text;
-                } else if (msgContent?.imageMessage?.caption) {
-                    text = msgContent.imageMessage.caption;
-                } else if (msgContent?.videoMessage?.caption) {
-                    text = msgContent.videoMessage.caption;
+                if (message.message?.conversation) {
+                    text = message.message.conversation;
+                } else if (message.message?.extendedTextMessage?.text) {
+                    text = message.message.extendedTextMessage.text;
+                } else if (message.message?.imageMessage?.caption) {
+                    text = message.message.imageMessage.caption;
+                } else if (message.message?.videoMessage?.caption) {
+                    text = message.message.videoMessage.caption;
                 }
 
                 // Also extract from document/audio captions
-                if (!text && msgContent?.documentMessage?.caption) {
-                    text = msgContent.documentMessage.caption;
+                if (!text && message.message?.documentMessage?.caption) {
+                    text = message.message.documentMessage.caption;
                 }
-                if (!text && msgContent?.audioMessage?.caption) {
-                    text = msgContent.audioMessage.caption;
-                }
-                
-                // Also try the buttonsResponseMessage and listResponseMessage
-                if (!text && msgContent?.buttonsResponseMessage?.selectedButtonId) {
-                    text = msgContent.buttonsResponseMessage.selectedButtonId;
-                }
-                if (!text && msgContent?.listResponseMessage?.singleSelectReply?.selectedRowId) {
-                    text = msgContent.listResponseMessage.singleSelectReply.selectedRowId;
-                }
-                if (!text && msgContent?.templateButtonReplyMessage?.selectedId) {
-                    text = msgContent.templateButtonReplyMessage.selectedId;
+                if (!text && message.message?.audioMessage?.caption) {
+                    text = message.message.audioMessage.caption;
                 }
                 
                 if (text) {
                     botLogger.log('MESSAGE', `📝 Message text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
                 }
 
-                // Antilink detection (before command processing)
-                if (text && isGroup) {
-                    try {
-                        const { antilinkGroups } = require('./silvaxlab/antlink');
-                        if (antilinkGroups.has(jid)) {
-                            const linkRegex = /https?:\/\/[^\s]+|www\.[^\s]+|wa\.me\/[^\s]+|chat\.whatsapp\.com\/[^\s]+/i;
-                            if (linkRegex.test(text)) {
-                                const isAdmin = await this.functions.isAdmin(message, this.sock);
-                                const isOwner = isFromMe || this.functions.isOwner(sender);
-                                if (!isAdmin && !isOwner) {
-                                    try {
-                                        await this.sock.sendMessage(jid, { delete: message.key });
-                                        await this.sock.sendMessage(jid, {
-                                            text: `⚠️ @${sender.split('@')[0]}, links are not allowed in this group!`,
-                                            mentions: [sender]
-                                        });
-                                    } catch (e) {}
-                                    continue;
-                                }
-                            }
-                        }
-                    } catch (e) {}
-                }
-
                 // Check if message starts with prefix
                 if (text && text.startsWith(config.PREFIX)) {
+                    botLogger.log('COMMAND', `⚡ Command detected: ${text} from ${sender}`);
+                    
                     const isOwner = isFromMe || this.functions.isOwner(sender);
+                    botLogger.log('COMMAND', `👑 Is owner: ${isOwner} (FromMe: ${isFromMe})`);
                     
                     const cmdText = text.slice(config.PREFIX.length).trim();
                     
-                    // Check if user is banned (skip for owner)
-                    if (!isOwner) {
-                        try {
-                            const { bannedUsers } = require('./silvaxlab/ban');
-                            if (bannedUsers.has(sender)) {
-                                await this.sock.sendMessage(jid, {
-                                    text: '🚫 You are banned from using this bot.',
-                                }, { quoted: message });
-                                continue;
-                            }
-                        } catch (e) {}
-                    }
+                    // Send typing indicator
+                    try { await this.sock.sendPresenceUpdate('composing', jid); } catch(e) {}
                     
                     // Try plugin commands first
                     const executed = await this.pluginManager.executeCommand({
@@ -1085,12 +1072,16 @@ Connected Number: ${this.functions.botNumber || 'Unknown'}
                         bot: this
                     });
                     
+                    // Stop typing indicator
+                    try { await this.sock.sendPresenceUpdate('paused', jid); } catch(e) {}
+                    
                     // If no plugin handled it, try built-in commands
                     if (!executed) {
                         const args = cmdText.split(/ +/);
                         const command = args.shift().toLowerCase();
                         
                         if (this.commands[command]) {
+                            botLogger.log('COMMAND', `🛠️ Executing built-in command: ${command} for ${sender}`);
                             await this.commands[command]({
                                 jid,
                                 sender,
