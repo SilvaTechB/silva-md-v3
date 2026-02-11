@@ -97,6 +97,8 @@ const botLogger = new BotLogger();
 // ==============================
 // 🔐 SESSION MANAGEMENT
 // ==============================
+let _sessionIdUsed = false;
+
 async function loadSession() {
     try {
         const credsPath = './sessions/creds.json';
@@ -105,13 +107,21 @@ async function loadSession() {
             fs.mkdirSync('./sessions', { recursive: true });
         }
 
-        // If no SESSION_ID, keep existing session files if they exist
         if (!config.SESSION_ID || typeof config.SESSION_ID !== 'string') {
             if (fs.existsSync(credsPath)) {
                 botLogger.log('SUCCESS', "✅ Using existing session");
                 return true;
             }
             botLogger.log('WARNING', "No session found. Scan QR code or set SESSION_ID");
+            return false;
+        }
+
+        if (_sessionIdUsed) {
+            if (fs.existsSync(credsPath)) {
+                botLogger.log('SUCCESS', "✅ Using existing session");
+                return true;
+            }
+            botLogger.log('INFO', "SESSION_ID already tried. Waiting for QR scan...");
             return false;
         }
 
@@ -131,6 +141,7 @@ async function loadSession() {
         const decompressedData = zlib.gunzipSync(compressedData);
 
         fs.writeFileSync(credsPath, decompressedData, "utf8");
+        _sessionIdUsed = true;
         botLogger.log('SUCCESS', "✅ Session loaded from SESSION_ID");
         return true;
     } catch (e) {
