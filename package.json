@@ -17,11 +17,11 @@
     "automation",
     "plugin-system"
   ],
-  "author": "Silva",
+  "author": "Silvas",
   "license": "MIT",
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "npm:dgxeon-soket@^7.0.3",
+    "@whiskeysockets/baileys": "npm:gifted-baileys@^2.0.6",
     "api-dylux": "^1.8.5",
     "axios": "^1.6.2",
     "cheerio": "^1.0.0-rc.12",
