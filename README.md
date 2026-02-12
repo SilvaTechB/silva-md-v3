@@ -1,271 +1,343 @@
+<div align="center">
+
+<img src="https://i.imgur.com/dBaSKWF.gif" height="20" width="100%">
+
+<br>
+
+[![Typing SVG](https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=800&size=45&duration=3000&pause=800&color=FF00A6&center=true&vCenter=true&width=900&height=80&lines=SILVA+MD+BOT;Next-Gen+WhatsApp+Bot)](https://git.io/typing-svg)
+
+<br>
+
+<img src="https://i.imgur.com/RvEKtPJ.jpeg" alt="Silva MD Bot" width="280" style="border-radius: 20px;">
+
+<br><br>
+
+[![Stars](https://img.shields.io/github/stars/SilvaTechB/silva-md-bot?style=for-the-badge&logo=github&logoColor=white&labelColor=0d1117&color=FF00A6)](https://github.com/SilvaTechB/silva-md-bot/stargazers)
+[![Forks](https://img.shields.io/github/forks/SilvaTechB/silva-md-bot?style=for-the-badge&logo=git&logoColor=white&labelColor=0d1117&color=6f42c1)](https://github.com/SilvaTechB/silva-md-bot/network/members)
+[![Last Commit](https://img.shields.io/github/last-commit/SilvaTechB/silva-md-bot?style=for-the-badge&logo=github&logoColor=white&labelColor=0d1117&color=00d4aa)](https://github.com/SilvaTechB/silva-md-bot/commits)
+[![License](https://img.shields.io/github/license/SilvaTechB/silva-md-bot?style=for-the-badge&logo=opensourceinitiative&logoColor=white&labelColor=0d1117&color=3b82f6)](LICENSE)
+
+<br>
+
+**A powerful, feature-rich WhatsApp bot with 90+ commands, AI integration, media tools, group management, and a self-hosted media API — built on Node.js and the Baileys library.**
+
+<img src="https://i.imgur.com/dBaSKWF.gif" height="20" width="100%">
+
+</div>
+
 ---
-# ⚡ Silva Core v6 · The Modular Automation Platform
-## Build What's Next for WhatsApp
 
-![Platform](https://img.shields.io/badge/Platform-Node.js%2018%2B-339933?logo=nodedotjs)
-![Architecture](https://img.shields.io/badge/Architecture-Plugin%20First-0066CC?logo=architecture)
-![Status](https://img.shields.io/badge/Status-Building%20in%20Public-FF6B35?logo=git)
-![License](https://img.shields.io/badge/License-Source%20Available-8A2BE2?logo=opensourceinitiative)
+## What is Silva MD Bot?
 
-> **🚧 Platform Preview** · This isn't a finished product—it's a foundation being built openly. APIs evolve, features emerge, and stability grows with community input.
+Silva MD Bot is a multi-purpose WhatsApp automation bot designed for groups, personal use, and communities. It connects to WhatsApp via QR code and gives you full control over messaging, media, AI conversations, group moderation, and much more — all through simple chat commands.
 
-## ✨ Why Silva Core?
-
-Most WhatsApp bots are monoliths. **Silva Core v6** is different—it's a modular platform that powers an entire ecosystem of specialized automation tools.
-
-**One engine. Infinite possibilities.**
-
-### 🌐 The Silva Ecosystem
-| Project | Purpose | Status |
-|---------|---------|---------|
-| **Silva MD** | General automation | 🟢 Core |
-| **Silva Spark** | Interactive experiences | 🟡 Planning |
-| **SilvaWave** | Media & services | 🟡 Planning |
-| **EduTech Nexus** | Education tools | 🔴 Future |
-| **Tech Nexus** | Developer utilities | 🔴 Future |
-
-All share the same battle-tested core, but wear different skins for different missions.
+No app installs. No complex setup. Just scan, deploy, and go.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
+
+<div align="center">
+
+| Step | Action | Link |
+|:---:|--------|------|
+| **1** | Get your session ID | [![Get Session](https://img.shields.io/badge/GET_SESSION-1e293b?style=for-the-badge&logo=whatsapp&logoColor=25D366)](https://silva-session-selector.vercel.app/) |
+| **2** | Fork & deploy | [![Deploy](https://img.shields.io/badge/DEPLOY_NOW-6f42c1?style=for-the-badge&logo=rocket&logoColor=white)](https://silva-md-fork-checker.vercel.app/) |
+| **3** | Join support | [![Support](https://img.shields.io/badge/WHATSAPP_GROUP-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://chat.whatsapp.com/Ik0YpP0dM8jHVjScf1Ay5S) |
+
+</div>
+
+---
+
+## Features at a Glance
+
+<table>
+<tr>
+<td width="50%">
+
+### Media & Downloads
+- YouTube music & video downloads
+- TikTok video downloader
+- Instagram reels & posts
+- Facebook video downloads
+- Spotify song search
+- Lyrics finder
+- APK downloader from Play Store
+- URL shortener
+- Self-hosted media API (yt-dlp)
+
+</td>
+<td width="50%">
+
+### AI & Smart Tools
+- GPT / AI chat assistant
+- Text-to-speech (19+ languages)
+- Image text effects (Ephoto360 — 20 styles)
+- Text art generator (TextPro — 25 styles)
+- Code compiler (multi-language)
+- Weather lookup
+- Movie search
+- Element lookup
+- Fancy Unicode text (10 font styles)
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+### Group Management
+- Kick, promote, demote members
+- Anti-link protection
+- Anti-spam detection
+- Anti-bot detection & removal
+- Welcome & goodbye messages (custom)
+- Group events dashboard
+- Tag all / hidetag members
+- Mute & unmute groups
+- Set group picture & description
+- Announcement mode toggle
+- 3-strike warning system
+- Native WhatsApp polls
+- Admin list & group info
+
+</td>
+<td width="50%">
+
+### Fun & Games
+- Truth or Dare
+- Magic 8-Ball
+- Rock Paper Scissors
+- Coin flip
+- Love meter (ship)
+- Random jokes & riddles
+- Inspirational quotes
+- Random facts
+- Bug sender (10 types)
+- Sticker maker (images & videos)
+
+### Owner Tools
+- Ban / unban users
+- Broadcast to all chats
+- Bot settings panel
+- Auto-update from GitHub
+- Eval & runtime commands
+
+</td>
+</tr>
+</table>
+
+### Protection Suite
+
+| Feature | What it does |
+|---------|-------------|
+| **Anti-Delete** | Recovers deleted messages and forwards them to the owner with full media |
+| **Anti-Link** | Auto-detects and removes links from non-admins in groups |
+| **Anti-Call** | Automatically rejects incoming calls (except from bot owner) |
+| **Anti-Spam** | Warns and takes action on spam behavior in groups |
+| **Anti-Bot** | Detects and removes other bots operating in your groups |
+| **Anti-Demote** | Automatically re-promotes demoted admins (LID format aware) |
+| **Auto Status View** | Silently views all contact statuses |
+| **Auto Status React** | Reacts to statuses with random emojis |
+
+---
+
+## Built With
+
+<div align="center">
+
+[![Node.js](https://img.shields.io/badge/Node.js_20-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![Baileys](https://img.shields.io/badge/Baileys-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://github.com/SilvaTechB/Baileys)
+[![Express](https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com)
+[![yt-dlp](https://img.shields.io/badge/yt--dlp-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
+[![Sharp](https://img.shields.io/badge/Sharp-99CC00?style=for-the-badge&logo=sharp&logoColor=white)](https://sharp.pixelplumbing.com)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)](https://ffmpeg.org)
+
+</div>
+
+| Component | Technology |
+|-----------|-----------|
+| **Runtime** | Node.js 20.x |
+| **WhatsApp Engine** | Baileys (custom fork) |
+| **Media API** | Express.js + yt-dlp (self-hosted on port 3001) |
+| **Image Processing** | Sharp |
+| **Video Processing** | FFmpeg |
+| **Sticker Engine** | Sharp + FFmpeg |
+| **Plugin System** | Dynamic module loader (90 plugins) |
+
+---
+
+## How to Connect
+
+### Option 1 — QR Code (Recommended)
+
+1. Deploy the bot on any platform (see below)
+2. Open the console/logs
+3. Scan the QR code with WhatsApp (Settings > Linked Devices > Link a Device)
+4. Bot connects instantly
+
+### Option 2 — Session ID
+
+1. Visit the [Session Generator](https://silva-session-selector.vercel.app/)
+2. Scan QR to get your `SESSION_ID`
+3. Set it as an environment variable on your deployment platform
+4. Deploy — the bot auto-connects using the saved session
+
+---
+
+## Deploy Anywhere
+
+<div align="center">
+
+| Platform | One-Click Deploy |
+|:--------:|:----------------:|
+| **Heroku** | [![Deploy](https://img.shields.io/badge/HEROKU-430098?style=for-the-badge&logo=heroku&logoColor=white)](https://silva-md-fork-checker.vercel.app/) |
+| **Railway** | [![Deploy](https://img.shields.io/badge/RAILWAY-0B0D0E?style=for-the-badge&logo=railway&logoColor=white)](https://silva-md-fork-checker.vercel.app/) |
+| **Koyeb** | [![Deploy](https://img.shields.io/badge/KOYEB-121212?style=for-the-badge&logo=koyeb&logoColor=white)](https://silva-md-fork-checker.vercel.app/) |
+| **Replit** | [![Deploy](https://img.shields.io/badge/REPLIT-F26207?style=for-the-badge&logo=replit&logoColor=white)](https://replit.com) |
+| **Talkdrove** | [![Deploy](https://img.shields.io/badge/TALKDROVE-2196F3?style=for-the-badge&logo=whatsapp&logoColor=white)](https://host.talkdrove.com/share-bot/49) |
+
+</div>
+
+### Manual Setup
 
 ```bash
-# Clone & explore
-git clone https://github.com/silva-ecosystem/core-v6.git
-cd core-v6
+# Clone the repository
+git clone https://github.com/SilvaTechB/silva-md-bot.git
+cd silva-md-bot
 
 # Install dependencies
 npm install
 
-# Configure your instance
-cp config.example.js config.js
-# Edit config.js with your settings
+# Set your environment variables (see below)
 
-# Launch
+# Start the bot
 node index.js
 ```
 
-Requirements: Node.js 18+, a WhatsApp number, and curiosity.
+---
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SESSION_ID` | WhatsApp session credentials | *required* |
+| `PREFIX` | Command prefix character | `.` |
+| `BOT_NAME` | Display name for the bot | `Silva MD Bot` |
+| `OWNER_NUMBER` | Your WhatsApp number (with country code) | — |
+| `PORT` | HTTP server port | `5000` |
+| `AUTO_STATUS_VIEW` | Auto-view all statuses | `true` |
+| `AUTO_STATUS_REACT` | Auto-react to statuses | `true` |
+| `ANTI_DELETE` | Forward deleted messages to owner | `true` |
+| `ANTI_CALL` | Auto-reject calls | `true` |
+| `AUTO_UPDATE` | Auto-pull updates from GitHub | `true` |
+| `UPDATE_REPO` | GitHub repo for auto-updates | `SilvaTechB/silva-md-bot` |
 
 ---
 
-🏗️ Architecture Philosophy
-
-Plugins Over Monoliths
-
-Every feature lives as an independent plugin. The core stays lean—you add only what you need.
-
-```javascript
-// Example plugin structure
-{
-  name: 'group-manager',
-  command: 'promote',
-  handler: async (ctx) => {
-    // Clean, focused logic
-    await promoteUser(ctx.user);
-    return ctx.reply('User promoted ✅');
-  }
-}
-```
-
-Lifecycle You Can Trust
+## Project Structure
 
 ```
-Message → Parse → Validate → Execute → Respond
-```
-
-Each step is observable, debuggable, and replaceable.
-
----
-
-🧩 What's in the Box?
-
-Category Features Status
-Core Engine Multi-device Baileys, event handler, plugin loader ✅ Stable
-Security Role-based permissions, config validation, session encryption ✅ Stable
-Automation Anti-delete, auto-view status, channel management 🟡 Beta
-Infrastructure Structured logging, Docker support, health checks 🟡 Beta
-Extensibility Plugin hot-reload, shared utilities, event hooks 🔧 Developing
-
-Note: "Beta" means tested but evolving. "Developing" means actively being built.
-
----
-
-📁 Project Structure
-
-```
-silva-core-v6/
-├── index.js          # Platform entry point
-├── config.js         # Single source of truth
-├── package.json
-│
-├── lib/              # Platform engine
-│   ├── handler.js    # Brain: routes everything
-│   ├── plugins.js    # Plugin manager with hot reload
-│   ├── security.js   # Permissions & validation
-│   └── logger.js     # Structured, searchable logs
-│
-├── plugins/          *Your features live here*
-│   ├── core/         # Essential commands
-│   ├── admin/        # Management tools
-│   ├── media/        # Image/video utilities
-│   └── custom/       # Your creations
-│
-├── sessions/         # Encrypted authentication
-└── docker/           # Production-ready containers
-```
-
-Rule: If it's not in config.js or a plugin, it shouldn't exist.
-
----
-
-⚙️ Configuration Made Simple
-
-```javascript
-// config.js - Configure once, run anywhere
-module.exports = {
-  identity: {
-    name: 'YourBotName',
-    prefix: '!',
-    owner: ['1234567890']
-  },
-  
-  features: {
-    antiDelete: true,
-    autoViewStatus: false,
-    newsletter: {
-      enabled: true,
-      channelId: 'your-channel'
-    }
-  },
-  
-  session: {
-    strategy: 'secure-file', // or 'encrypted-db'
-    autoRestart: true
-  }
-};
+silva-md-bot/
+├── index.js          # Entry point — starts HTTP server + bot
+├── silva.js          # WhatsApp connection & message handler
+├── config.js         # Configuration via environment variables
+├── silvaxlab/        # Plugin directory (90 command plugins)
+│   ├── menu.js       # Interactive command menu
+│   ├── music.js      # YouTube audio downloader
+│   ├── video.js      # YouTube video downloader
+│   ├── ai.js         # AI chat integration
+│   ├── ephoto.js     # Ephoto360 text effects (20 styles)
+│   ├── textpro.js    # TextPro.me text effects (25 styles)
+│   ├── sticker.js    # Sticker maker
+│   ├── welcome.js    # Welcome/goodbye system
+│   ├── groupevent.js # Group events dashboard
+│   └── ...           # 80+ more plugins
+├── lib/
+│   ├── mediaApi.js   # Self-hosted media download API
+│   ├── updater.js    # Auto-update system
+│   ├── events.js     # Event handlers
+│   └── logger.js     # Logging utility
+└── package.json
 ```
 
 ---
 
-🛠️ Building Your First Plugin
+## Command Categories
 
-1. Create plugins/custom/my-feature.js
-2. Define your command and logic
-3. Watch it auto-load into the system
-
-```javascript
-// Simple greeting plugin
-module.exports = {
-  name: 'greeter',
-  command: 'hello',
-  
-  execute: async (ctx) => {
-    const name = ctx.userName || 'friend';
-    await ctx.reply(`Hey ${name}! 👋\nSilva Core is working.`);
-  },
-  
-  help: 'Say hello to your bot'
-};
-```
-
-The platform handles the rest: permissions, error catching, logging.
+| Category | Count | Examples |
+|----------|:-----:|---------|
+| Media & Downloads | 12 | `.music`, `.video`, `.tiktok`, `.ig`, `.fb`, `.apk` |
+| AI & Tools | 10 | `.ai`, `.gpt`, `.tts`, `.translate`, `.compile`, `.weather` |
+| Maker | 2 | `.ephoto <effect> <text>`, `.textpro <effect> <text>` |
+| Group Management | 18 | `.kick`, `.promote`, `.warn`, `.mute`, `.antilink`, `.events` |
+| Fun & Games | 13 | `.truth`, `.dare`, `.8ball`, `.joke`, `.riddle`, `.ship` |
+| Stickers | 3 | `.sticker`, `.take`, `.tourl` |
+| Protection | 6 | `.antilink`, `.anticall`, `.antispam`, `.antibot`, `.antidemote` |
+| Owner | 10 | `.ban`, `.broadcast`, `.eval`, `.update`, `.settings` |
+| Utility | 16 | `.menu`, `.ping`, `.alive`, `.whois`, `.pp`, `.short` |
+| **Total** | **90** | — |
 
 ---
 
-🔍 Debugging with Clarity
+## Auto-Update System
 
-Silva Core gives you observability, not just logs:
+Silva MD Bot can automatically pull the latest plugins and library updates from the main GitHub repository. Updates are checked every 30 minutes when enabled.
 
-```bash
-# Structured logging shows you what matters
-[2025-12-25T10:30:00] INFO  Handler: Plugin 'greeter' registered
-[2025-12-25T10:30:05] EVENT Message: !hello from @user
-[2025-12-25T10:30:05] DEBUG Security: Permission check passed
-[2025-12-25T10:30:05] INFO  Plugin: greeter executed in 45ms
-```
-
-When things break, you'll know where, why, and how to fix it.
+- New plugins are downloaded automatically
+- Existing plugins are updated if a newer version is available
+- Core libraries in `lib/` are kept in sync
+- Manual update: send `.update` command via WhatsApp
 
 ---
 
-🚨 Security First
+## Connect With Silva
 
-Essential Practices
+<div align="center">
 
-· 🔐 Never commit config.js with credentials
-· 📁 Keep sessions/ directory private
-· 👥 Use role-based permissions in production
-· ⏱️ Respect WhatsApp's rate limits
+[![WhatsApp Channel](https://img.shields.io/badge/WhatsApp_Channel-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://whatsapp.com/channel/0029VaAkETLLY6d8qhLmZt2v)
+[![Instagram](https://img.shields.io/badge/Instagram-E4405F?style=for-the-badge&logo=instagram&logoColor=white)](https://instagram.com/_its.silva)
+[![Facebook](https://img.shields.io/badge/Facebook-1877F2?style=for-the-badge&logo=facebook&logoColor=white)](https://www.facebook.com/profile.php?id=100055490090211)
+[![Twitter](https://img.shields.io/badge/X_(Twitter)-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/silva_african)
+[![Support Group](https://img.shields.io/badge/Support_Group-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://chat.whatsapp.com/Ik0YpP0dM8jHVjScf1Ay5S)
 
-The Golden Rule
-
-Automation should augment communities, not exploit them. Build responsibly.
-
----
-
-🗺️ Where We're Heading
-
-2026 Roadmap
-
-· Q1 · Stable Plugin API v1.0
-· Q2 · Web dashboard for management
-· Q3 · Plugin marketplace prototype
-· Q4 · Silva Spark MD launch
-
-We build in public because the best ideas come from collaboration.
+</div>
 
 ---
 
-🤝 Contributing to the Ecosystem
+## Contributors
 
-We welcome contributors who:
+<div align="center">
 
-1. Follow the existing architecture patterns
-2. Test their changes thoroughly
-3. Document new features clearly
-4. Respect the ecosystem's philosophy
+| <img src="https://github.com/SilvaTechB.png?size=100" width="80" style="border-radius:50%"> | <img src="https://github.com/shizothetechie.png?size=100" width="80" style="border-radius:50%"> | <img src="https://github.com/Lazack28.png?size=100" width="80" style="border-radius:50%"> |
+|:---:|:---:|:---:|
+| **[Silva](https://github.com/SilvaTechB)** | **[Shizo](https://github.com/shizothetechie)** | **[Lazack28](https://github.com/Lazack28)** |
+| Creator & Lead Dev | Contributor | Contributor |
 
-Start small: Fix a bug, improve documentation, or build a simple plugin.
-
----
-
-📜 License & Ownership
-
-Silva Core v6 is source-available. You can:
-
-· Use it for personal projects
-· Study and learn from the code
-· Contribute improvements
-· Build commercial products (with attribution)
-
-Full license details coming with v6 Stable.
+</div>
 
 ---
 
-💭 Final Thoughts
+## Community
 
-Silva Core isn't trying to be another bot in a crowded space.
+<div align="center">
 
-It's building the platform that will power the next generation of WhatsApp automation—modular, maintainable, and built to evolve.
+[![Forkers](https://reporoster.com/forks/SilvaTechB/silva-md-bot)](https://github.com/SilvaTechB/silva-md-bot/network/members)
+[![Stargazers](https://reporoster.com/stars/SilvaTechB/silva-md-bot)](https://github.com/SilvaTechB/silva-md-bot/stargazers)
 
-Join us in building what's next.
+</div>
 
 ---
 
-Silva Core v6 · Building in public since 2025
+## License
 
-```
+MIT License — free to use, modify, and distribute.
 
-This modernization focuses on:
-1. **Clear visual hierarchy** with better spacing and structure
-2. **Action-oriented language** that emphasizes building and creating
-3. **Practical examples** that developers can immediately use
-4. **Reduced verbosity** while keeping the technical depth
-5. **Modern badge styling** with logos for better visual recognition
-6. **Tables for comparison** making feature status clearer
-7. **Code examples** that show rather than just tell
-8. **Stronger calls to action** for contributors
-9. **Mobile-friendly formatting** with proper line breaks
-10. **Personality without distraction** - keeping the "built in public" ethos while being more scannable
+<div align="center">
+
+**Built with purpose by [Silva Tech Inc](https://github.com/SilvaTechB)**
+
+<img src="https://i.imgur.com/dBaSKWF.gif" height="20" width="100%">
+
+<sub>Silva MD Bot — 90 commands. One scan. Unlimited possibilities.</sub>
+
+</div>
