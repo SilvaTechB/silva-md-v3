@@ -1,9 +1,13 @@
-const axios = require("axios");
+const yts = require('yt-search')
+const axios = require('axios')
+const config = require('../config')
+
+const API_BASE = 'http://127.0.0.1:3001'
 
 const handler = {
-    help: ["play <song name>"],
-    tags: ["song", "music"],
-    command: /^play$/i,
+    help: ['play <song name>', 'song <song name>'],
+    tags: ['music', 'media'],
+    command: /^(play|song|music)$/i,
     group: false,
     admin: false,
     botAdmin: false,
@@ -11,76 +15,117 @@ const handler = {
 
     execute: async ({ jid, sock, message, args }) => {
         try {
-            const sender = message.key.participant || message.key.remoteJid;
-            const query = args.join(" ");
+            const sender = message.key.participant || message.key.remoteJid
+            const query = args.join(' ')
 
             if (!query) {
                 return await sock.sendMessage(jid, {
-                    text: "❌ Provide a song name.\nExample:\n.play Hello",
-                    contextInfo: {
-                        mentionedJid: [sender]
-                    }
-                }, { quoted: message });
+                    text: `╭━━━━━━━━━━━━━━━━━━━━╮\n┃   🎵 MUSIC PLAYER   ┃\n╰━━━━━━━━━━━━━━━━━━━━╯\n\n*Usage:*\n${config.PREFIX}play <song name>\n${config.PREFIX}song <song name>\n\n*Example:*\n${config.PREFIX}play Adele Hello\n\n_Searches YouTube and sends the audio._`
+                }, { quoted: message })
             }
 
-            const api = `https://api.nekolabs.web.id/dwn/youtube/play/v1?q=${encodeURIComponent(query)}`;
-            const { data } = await axios.get(api);
+            await sock.sendMessage(jid, { react: { text: '🔍', key: message.key } })
 
-            if (!data || !data.success) {
+            const searchResult = await yts(query)
+            const videos = searchResult.videos
+
+            if (!videos || videos.length === 0) {
                 return await sock.sendMessage(jid, {
-                    text: "❌ Music not found.",
-                    contextInfo: {
-                        mentionedJid: [sender]
-                    }
-                }, { quoted: message });
+                    text: '❌ No results found for: ' + query
+                }, { quoted: message })
             }
 
-            const meta = data.result.metadata;
-            const audioUrl = data.result.downloadUrl;
+            const video = videos[0]
 
-            // 🎵 Send audio
-            await sock.sendMessage(jid, {
-                audio: { url: audioUrl },
-                mimetype: "audio/mpeg"
-            }, { quoted: message });
+            if (video.seconds > 600) {
+                return await sock.sendMessage(jid, {
+                    text: '❌ Song too long! Max 10 minutes.'
+                }, { quoted: message })
+            }
 
-            // 📰 Send newsletter-style info message
             await sock.sendMessage(jid, {
-                text:
-                    `🎶 *Now Playing*\n\n` +
-                    `• *Title:* ${meta.title}\n` +
-                    `• *Channel:* ${meta.channel}\n` +
-                    `• *Duration:* ${meta.duration}`,
+                image: { url: video.thumbnail },
+                caption: `🎶 *${video.title}*\n\n⏱ Duration: ${video.timestamp}\n👁 Views: ${video.views?.toLocaleString() || 'N/A'}\n📺 Channel: ${video.author?.name || 'Unknown'}\n\n_⬇️ Downloading audio..._`,
                 contextInfo: {
-                    mentionedJid: [sender],
                     forwardingScore: 999,
                     isForwarded: true,
                     forwardedNewsletterMessageInfo: {
-                        newsletterJid: "120363200367779016@newsletter",
-                        newsletterName: "Silva MD Music Hub 🎶",
+                        newsletterJid: '120363200367779016@newsletter',
+                        newsletterName: 'SILVA MD MUSIC 🎶',
                         serverMessageId: 145
                     }
                 }
-            }, { quoted: message });
+            }, { quoted: message })
+
+            await sock.sendMessage(jid, { react: { text: '⬇️', key: message.key } })
+
+            let audioBuffer = null
+
+            try {
+                const response = await axios.get(`${API_BASE}/api/ytAudio`, {
+                    params: { url: video.url },
+                    responseType: 'arraybuffer',
+                    timeout: 120000
+                })
+                if (response.data && response.data.length > 1000) {
+                    audioBuffer = Buffer.from(response.data)
+                }
+            } catch (e) {
+                console.log('[MUSIC] Local API failed:', e.message)
+            }
+
+            if (!audioBuffer) {
+                const externalApis = [
+                    `https://api.ryzendesu.vip/api/downloader/ytmp3?url=${encodeURIComponent(video.url)}`,
+                    `https://api.dreaded.site/api/ytdl/audio?url=${encodeURIComponent(video.url)}`,
+                    `https://api.giftedtech.web.id/api/download/dlmp3?url=${encodeURIComponent(video.url)}`
+                ]
+
+                for (const api of externalApis) {
+                    try {
+                        const { data } = await axios.get(api, { timeout: 30000 })
+                        const audioUrl = data.result?.downloadUrl || data.result?.download_url || data.result?.url || data.url
+                        if (audioUrl) {
+                            const resp = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 30000 })
+                            if (resp.data && resp.data.length > 1000) {
+                                audioBuffer = Buffer.from(resp.data)
+                                break
+                            }
+                        }
+                    } catch (e) { continue }
+                }
+            }
+
+            if (!audioBuffer) {
+                return await sock.sendMessage(jid, {
+                    text: `⚠️ Audio download failed. Try:\n🔗 ${video.url}`
+                }, { quoted: message })
+            }
+
+            await sock.sendMessage(jid, {
+                audio: audioBuffer,
+                mimetype: 'audio/mpeg',
+                contextInfo: {
+                    externalAdReply: {
+                        title: video.title,
+                        body: video.author?.name || 'Silva MD Music',
+                        thumbnailUrl: video.thumbnail,
+                        mediaType: 2,
+                        mediaUrl: video.url,
+                        sourceUrl: video.url
+                    }
+                }
+            }, { quoted: message })
+
+            await sock.sendMessage(jid, { react: { text: '🎵', key: message.key } })
 
         } catch (err) {
-            console.error("PLAY ERROR:", err);
-
+            console.error('PLAY ERROR:', err)
             await sock.sendMessage(jid, {
-                text: "❌ *Music Error*\nFailed to fetch or play the song.",
-                contextInfo: {
-                    mentionedJid: [message.key.participant || message.key.remoteJid],
-                    forwardingScore: 999,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: "120363200367779016@newsletter",
-                        newsletterName: "Silva MD Music Hub 🎶",
-                        serverMessageId: 145
-                    }
-                }
-            }, { quoted: message });
+                text: '❌ *Music Error*\nFailed to play the song. Try again later.'
+            }, { quoted: message })
         }
     }
-};
+}
 
-module.exports = { handler };
+module.exports = { handler }

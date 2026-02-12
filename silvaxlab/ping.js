@@ -41,6 +41,8 @@ const handler = {
                               `🤖 Bot Version: 1.0.0\n` +
                               `🌐 Status: Online`;
 
+            const config = require('../config')
+            const p = config.PREFIX
             await sock.sendMessage(jid, {
                 text: pingStats,
                 contextInfo: {

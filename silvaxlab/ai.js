@@ -1,9 +1,9 @@
 const axios = require('axios');
 
 const handler = {
-    help: ['ai', 'gpt', 'chatgpt'],
+    help: ['ai'],
     tags: ['ai', 'utility'],
-    command: /^(ai|gpt|chatgpt)$/i,
+    command: /^(ai)$/i,
     group: false,
     admin: false,
     botAdmin: false,
